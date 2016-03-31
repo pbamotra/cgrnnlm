@@ -55,7 +55,7 @@ def fetch_wsj_data():
 
 def get_sents_by_field_ids(field_ids):
     if not isinstance(field_ids, list):
-        field_ids = list(field_ids)
+        field_ids = [field_ids]
     ptb = BracketParseCorpusReader(DATA_DIR, FILE_PATTERN)
     return ptb.sents(fileids=field_ids)
 
@@ -69,4 +69,4 @@ def print_corpus_metrics(corpus_dir='data'):
 
 
 if __name__ == '__main__':
-    print_corpus_metrics()
+    print print_corpus_metrics()
