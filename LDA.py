@@ -2,6 +2,7 @@ import os
 import Corpus
 import string
 import logging
+import numpy as np
 from gensim import corpora
 from itertools import chain
 from nltk.corpus import stopwords
@@ -19,7 +20,7 @@ extra_waste.update(["...", "mr.", "ms.", "''", "n't", "year", "market", "company
                     "billion", "thousand", "price", "prices", "share", "shares", "group", "u.s.", "month",
                     "quarter", "dollar", "dollars", "day", "daily", "week", "weekly", "time", "corp.", "inc.", "profit",
                     "loss", "sale", "make", "made", "business", "up", "down", "rise", "fall", "rose", "fallen", "wa",
-                    "ha"])
+                    "ha", "cent", "cents"])
 extra_waste.update(range(10))
 DOC_LEN_THRESHOLD = 8  # Min. number of sentences in a document
 N_TOPICS = 10  # No. of topics for LDA
@@ -44,8 +45,8 @@ def clean_text(doc_as_sentences):
                     and has_no_bad_start(word)]
     return cleaned_text
 
-# Set refresh = True to train LDA again
-def train(refresh=False):
+
+def train(refresh=False):  # Set refresh = True to train LDA again
     if refresh:
         ptb = BracketParseCorpusReader(Corpus.DATA_DIR, Corpus.FILE_PATTERN)
         train_folders = [str(i) + str(j) for i in range(2) for j in range(10)]
@@ -65,10 +66,8 @@ def train(refresh=False):
                     train_documents.append(doc2sentence)
         logger.debug('Parsed all training documents')
 
-        dictionary.filter_extremes(no_below=5, no_above=0.8)
+        dictionary.filter_extremes(no_below=1, no_above=0.5)
         dictionary.save(DICTIONARY_FILE)
-
-        n_words = len(dictionary.token2id)
 
         logger.debug('Creating corpus for training data')
         corpus = [dictionary.doc2bow(text) for text in train_documents]
@@ -81,11 +80,27 @@ def train(refresh=False):
         lda.save(LDA_MODEL_FILE)
     else:
         dictionary = corpora.dictionary.Dictionary.load(DICTIONARY_FILE)
-        n_words = len(dictionary.token2id)
         lda = LdaModel.load(LDA_MODEL_FILE)
 
-    # TODO: Return normalised vectors from beta matrix
-    # lda.show_topics(num_topics=N_TOPICS, num_words=n_words, log=True, formatted=True)
+    return lda, dictionary
+
+
+def get_beta_vector(model, dictionary, word):
+    cleaned_word = clean_text([word])
+    cleaned_word = cleaned_word if len(cleaned_word) > 0 else None
+
+    log_beta = np.array([0] * N_TOPICS)
+
+    if cleaned_word is not None:
+        word_id_cnt = dictionary.doc2bow(cleaned_word)
+        if len(word_id_cnt) == 1:
+            word_col = word_id_cnt[0][0]
+            log_beta = model.expElogbeta[:, word_col]
+
+    return log_beta
+
 
 if __name__ == '__main__':
-    train()
+    lda_model, corpus = train()
+    print get_beta_vector(lda_model, corpus, 'finance')
+    print get_beta_vector(lda_model, corpus, 'hocus-pocus')
