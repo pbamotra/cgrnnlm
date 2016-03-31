@@ -3,6 +3,7 @@ import Corpus
 import string
 import logging
 import numpy as np
+from pprint import pprint
 from gensim import corpora
 from itertools import chain
 from nltk.corpus import stopwords
@@ -47,7 +48,7 @@ def clean_text(doc_as_sentences):
     return cleaned_text
 
 
-def train(refresh=False):  # Set refresh = True to train LDA again
+def train(refresh=True):
     if refresh:
         ptb = BracketParseCorpusReader(Corpus.DATA_DIR, Corpus.FILE_PATTERN)
         train_folders = [str(i) + str(j) for i in range(2) for j in range(10)]
@@ -102,6 +103,10 @@ def get_beta_vector(model, dictionary, word):
 
 
 if __name__ == '__main__':
-    lda_model, corpus = train()
-    print get_beta_vector(lda_model, corpus, 'finance')
-    print get_beta_vector(lda_model, corpus, 'hocus-pocus')
+    # Set refresh = True to train LDA again
+    lda_model, model_dictionary = train(refresh=False)
+    pprint(lda_model.show_topics(num_topics=N_TOPICS, num_words=20))
+    print
+    print 'finance ->', get_beta_vector(lda_model, model_dictionary, 'finance')
+    print
+    print 'hocus-pocus ->', get_beta_vector(lda_model, model_dictionary, 'hocus-pocus')
