@@ -10,7 +10,8 @@ from nltk.stem import WordNetLemmatizer
 from gensim.models.ldamodel import LdaModel
 from nltk.corpus import BracketParseCorpusReader
 
-logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.DEBUG)
+# change logging level to DEBUG to see logs
+logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.ERROR)
 logger = logging.getLogger('')
 lmtzr = WordNetLemmatizer()
 stops = stopwords.words('english')
