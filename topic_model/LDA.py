@@ -6,13 +6,14 @@ import numpy as np
 from pprint import pprint
 from gensim import corpora
 from itertools import chain
+from flask import Flask, jsonify
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from gensim.models.ldamodel import LdaModel
 from nltk.corpus import BracketParseCorpusReader
 
 # change logging level to DEBUG to see logs
-logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.ERROR)
+logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.DEBUG)
 logger = logging.getLogger('')
 lmtzr = WordNetLemmatizer()
 stops = stopwords.words('english')
@@ -28,6 +29,8 @@ DOC_LEN_THRESHOLD = 8  # Min. number of sentences in a document
 N_TOPICS = 10  # No. of topics for LDA
 DICTIONARY_FILE = 'dictionary.dict'
 LDA_MODEL_FILE = 'lda.gensim'
+app = Flask(__name__)
+final_model, final_dict = None, None
 
 
 def has_no_bad_start(word):
@@ -86,27 +89,34 @@ def train(refresh=True):
 
     return lda, dictionary
 
+@app.route("/get_beta/<word>")
+def get_beta_vector(word):
+    """
+    REST interface to getting beta vectors for the specified words
+    Make a call like - http://127.0.0.1:5000/get_beta/revenue
 
-def get_beta_vector(model, dictionary, word):
+    :param word: word for which beta vector is needed
+    :return: dictionary of the form {'betas': list of betas}
+    """
     cleaned_word = clean_text([word])
     cleaned_word = cleaned_word if len(cleaned_word) > 0 else None
 
     log_beta = np.array([0] * N_TOPICS)
 
     if cleaned_word is not None:
-        word_id_cnt = dictionary.doc2bow(cleaned_word)
+        word_id_cnt = final_dict.doc2bow(cleaned_word)
         if len(word_id_cnt) == 1:
             word_col = word_id_cnt[0][0]
-            log_beta = model.expElogbeta[:, word_col]
-
-    return log_beta
+            log_beta = final_model.expElogbeta[:, word_col]
+    return jsonify({'betas': log_beta.tolist()})
 
 
 if __name__ == '__main__':
     # Set refresh = True to train LDA again
-    lda_model, model_dictionary = train(refresh=False)
-    pprint(lda_model.show_topics(num_topics=N_TOPICS, num_words=20))
-    print
-    print 'finance ->', get_beta_vector(lda_model, model_dictionary, 'finance')
-    print
-    print 'hocus-pocus ->', get_beta_vector(lda_model, model_dictionary, 'hocus-pocus')
+    final_model, final_dict = train(refresh=False)
+    app.run()
+    # pprint(final_model.show_topics(num_topics=N_TOPICS, num_words=20))
+    # print
+    # print 'finance ->', get_beta_vector(final_model, model_dictionary, 'finance')
+    # print
+    # print 'hocus-pocus ->', get_beta_vector(final_model, model_dictionary, 'hocus-pocus')
