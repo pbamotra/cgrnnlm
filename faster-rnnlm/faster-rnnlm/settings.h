@@ -2,7 +2,7 @@
 #define FASTER_RNNLM_SETTINGS_H_
 
 #define MAX_STRING 100            // max length of word in bytes
-#define MAX_SENTENCE_WORDS 10000  // max length of a sentence in words
+#define MAX_SENTENCE_WORDS 10005  // max length of a sentence in words
 #define MAX_LINE_SIZE 10000000    // max length of a sentence in bytes
 #define MAX_NGRAM_ORDER 10        // max direct-order
 

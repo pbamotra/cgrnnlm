@@ -123,7 +123,8 @@ void NNet::Init() {
       " maxent_hash_size=%"PRId64", maxent_order=%d, vocab_size=%d, use_nce=%d\n",
       cfg.layer_size, cfg.layer_type.c_str(), cfg.layer_count, cfg.maxent_hash_size,
       cfg.maxent_order, vocab.size(), static_cast<int>(cfg.use_nce));
-  embeddings.resize(vocab.size(), cfg.layer_size);
+  embeddings.resize(vocab.size() + cfg.context_size, cfg.layer_size);
+  fprintf(stderr, "In NNEtInit, embeddings size = (%ld, %ld)", embeddings.rows(), embeddings.cols());
   if (cfg.layer_size) {
     InitNormal(std::min(1. / std::sqrt(cfg.layer_size), 0.01), &embeddings);
   }
@@ -145,7 +146,6 @@ void NNet::Init() {
     // softmax_layer = HSTree::CreateRandomTree(vocab, cfg.layer_size, cfg.hs_arity, 0);
   }
 }
-
 
 void NNet::ApplyDiagonalInitialization(Real alpha) {
   rec_layer->GetWeights()->DiagonalInitialization(alpha);

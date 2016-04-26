@@ -23,6 +23,9 @@
 #include "faster-rnnlm/util.h"
 #include "faster-rnnlm/words.h"
 
+// set this mode to true when testing your changes and protect your printfs with this.
+bool _DEBUG_MODE = false;
+
 namespace {
 
 enum OOVPolicy {kSkipSentence, kConvertToUnk};
@@ -121,10 +124,40 @@ inline int CalculateMaxentHashIndices(
   return maxent_present;
 }
 
+void ComputeContextMatrix(const WordIndex *sen, int sen_length,
+                          int context_size, RowMatrix* context_matrix) {
+  // TODO(pankesh/judy): Fill this up! It should have the LDA products. We
+  // return 0s for now lol.
+  // It must return a matrix of length sen_length x context_size. The i-th row
+  // has the context vector for the i-th word in the sentence.
+
+  if (context_matrix == NULL) {
+    fprintf(stderr, "Provided a null context matrix. What did you expect?\n");
+    return;
+  }
+  context_matrix->setZero();
+}
+
 inline void PropagateForward(NNet* nnet, const WordIndex* sen, int sen_length, IRecUpdater* layer) {
+  // Dimensions:
+  // nnet->embeddings: (|V| + |C|) x |H| (earlier it was |V| x |H|)
+  // input: |S| x |H|, where |S| is length of sentence.
   RowMatrix& input = layer->GetInputMatrix();
+
+  // Return the last |C| rows of the ( (|V| + |C|) x h embeddings matrix).
+  const RowMatrix context_embeddings = nnet->embeddings.bottomRows(nnet->cfg.context_size);
+
+  // TODO: Make this global instead of allocating each time here.
+  RowMatrix context_matrix(sen_length, nnet->cfg.context_size);
+  ComputeContextMatrix(sen, sen_length, nnet->cfg.context_size, &context_matrix);
+
   for (int i = 0; i < sen_length; ++i) {
-    input.row(i) = nnet->embeddings.row(sen[i]);
+    // We're doing a [|v| + |C|] row matrix multiplication with the embeddings
+    // matrix. The |V| multiplicati on part is just a selection of the i-th row
+    // since it's a one-hot vector.
+    RowVector v_row = nnet->embeddings.row(sen[i]);
+    RowVector c_row = context_matrix.row(i) * context_embeddings;
+    input.row(i) = v_row + c_row;
   }
   layer->ForwardSequence(sen_length);
 }
@@ -225,6 +258,10 @@ void *RunThread(void *ptr) {
   int64_t n_done_words_local = 0, n_last_report_at = 0;
 
   uint64_t next_random = *task.seed;
+  
+  int _DEBUG_MAX_READINGS = 2;
+  int _SENTENCE_COUNTER = 0;
+
   while (reader.Read()) {
     n_done_words_local += reader.sentence_length();
     if (n_done_words_local - n_last_report_at > kReportEveryWords) {
@@ -256,7 +293,6 @@ void *RunThread(void *ptr) {
 
     if (reader.HasOOVWords())
       continue;
-
     // A sentence contains <s>, followed by (seq_length - 1) actual words, followed by </s>
     // Both <s> and </s> are mapped to zero
     const WordIndex* sen = reader.sentence();
@@ -269,6 +305,14 @@ void *RunThread(void *ptr) {
     const RowMatrix& output = rec_layer_updater->GetOutputMatrix();
     RowMatrix& output_grad = rec_layer_updater->GetOutputGradMatrix();
     output_grad.topRows(seq_length).setZero();
+
+    if (_DEBUG_MODE) {
+      fprintf(stderr, "Debug(sen=%d): output.size()=(%ld, %ld), "
+                      "output_grad.size()=(%ld, %ld), seq_length=%d\n",
+              _SENTENCE_COUNTER, output.rows(), output.cols(),
+              output_grad.rows(), output_grad.cols(), seq_length);
+    }
+
     for (int target = 1; target <= seq_length; ++target) {
       const Real* output_row = output.row(target - 1).data();
       Real* output_grad_row = output_grad.row(target - 1).data();
@@ -314,6 +358,9 @@ void *RunThread(void *ptr) {
     // Update recurrent weights
     if (learn_recurrent) {
       rec_layer_updater->UpdateWeights(seq_length, task.lrate, l2reg, rmsprop, gradient_clipping);
+    }
+    if (_DEBUG_MODE && ++_SENTENCE_COUNTER > _DEBUG_MAX_READINGS) {
+        break;
     }
   }
 
@@ -613,6 +660,9 @@ int main(int argc, char **argv) {
   Real generate_temperature = 1;
   int bptt_skip = bptt_period - bptt;
 
+  // If we use LDA, context size is num_topics.
+  int context_size = 10;
+
   SimpleOptionParser opts;
   opts.Echo("Fast Recurrent Neural Network Language Model");
   opts.Echo("Main options:");
@@ -651,6 +701,7 @@ int main(int argc, char **argv) {
   opts.Echo("Early stopping options (let `ratio' be a ratio of previous epoch validation entropy to new one):");
   opts.Add("stop", "If `ratio' less than `stop' then start leaning rate decay", &bad_ratio);
   opts.Add("lr-decay-factor", "Learning rate decay factor", &lr_decay_factor);
+  opts.Add("context-size", "The size of the context vector.", &context_size);
   opts.Add("reject-threshold", "If (whats more) `ratio' less than `reject-threshold' then purge the epoch", &awful_ratio);
   opts.Add("retry", "Stop training once `ratio' has hit `stop' at least `retry' times", &max_bad_epochs);
   opts.Echo();
@@ -744,7 +795,7 @@ int main(int argc, char **argv) {
     NNetConfig cfg = {
       layer_size, layer_count, maxent_hash_size, maxent_order,
       (nce_samples > 0), static_cast<Real>(nce_lnz), reverse_sentence,
-      hs_arity, layer_type};
+      hs_arity, layer_type, context_size};
     main_nnet = new NNet(vocab, cfg, use_cuda, use_cuda_memory_efficient);
     if (diagonal_initialization > 0) {
       main_nnet->ApplyDiagonalInitialization(diagonal_initialization);
