@@ -204,6 +204,7 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
     const WordIndex* sen = reader.sentence();
     int seq_length = reader.sentence_length();
     Real sen_logprob = 0.0;
+    const int vocab_portion = nnet->VocabPortionOfLayerSize();
 
     RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
     ComputeContextMatrix(sen, seq_length, nnet->cfg.context_size,
@@ -211,7 +212,8 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
     PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
 
     // TODO: Change this as well to use correct split for Context/Vocab.
-    const RowMatrix& output = rec_layer_updater->GetOutputMatrix();
+    const RowMatrix& full_output = rec_layer_updater->GetOutputMatrix();
+    const RowMatrix& output = full_output.leftCols(vocab_portion);
     if (!nnet->cfg.use_nce) {
       // Hierarchical Softmax
       for (int target = 1; target <= seq_length; ++target) {
@@ -297,10 +299,9 @@ void *RunThread(void *ptr) {
   int _DEBUG_MAX_READINGS = 2;
   int _SENTENCE_COUNTER = 0;
 
-  const int layer_size = nnet->cfg.layer_size;
   // 0 to vocab_portion - 1 is for softmax/nce loss. 
   // vocab_portion to layer_size - 1 is for conext loss.
-  const int vocab_portion = layer_size - nnet->cfg.context_size;
+  const int vocab_portion = nnet->VocabPortionOfLayerSize();
   // The following two gradients are weighted separately to contribute to
   // output_grad.row(i).
   // We have the gradient from the vocab loss (either softmax or nce) here.
@@ -316,10 +317,6 @@ void *RunThread(void *ptr) {
   RowVector zero_context(nnet->cfg.context_size);
   zero_context.setZero();
 
-  // We concatenate both vectors into this.
-  RowVector combined_grad;
-  combined_grad.resize(layer_size);
-  
 
   while (reader.Read()) {
     n_done_words_local += reader.sentence_length();

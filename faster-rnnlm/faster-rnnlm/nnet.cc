@@ -214,6 +214,11 @@ void NNet::SaveCompatible(const std::string& model_file) const {
 }
 
 
+
+int NNet::VocabPortionOfLayerSize() const {
+    return cfg.layer_size - cfg.context_size;
+}
+
 void NNet::ReLoad(const std::string& model_file) {
   FILE *file = fopen(model_file.c_str(), "rb");
 

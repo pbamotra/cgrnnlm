@@ -43,6 +43,8 @@ struct NNet {
 
   void Save(const std::string& model_file) const;
 
+  int VocabPortionOfLayerSize() const;
+
   // Reload weights from the file
   //
   // The config of the model in the file is expected to be identical to cfg
