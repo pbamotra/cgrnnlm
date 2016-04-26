@@ -258,27 +258,30 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
   return entropy;
 }
 
-// Returns the L2 loss and sets the gradient in l2_gradient.
+// Returns the L2 loss and sets the gradient in context_grad.
 // output_block: 1 x |C| matrix.
 // true_context: 1 x |C| matrix.
-// l2_gradient: 1 x |C| matrix
-double ComputeL2Loss(const RowMatrix &output_block,
-                     const RowMatrix &true_context, RowVector *l2_gradient) {
+// context_grad: 1 x |C| matrix
+double ComputeContextLoss(const RowMatrix &output_block,
+                     const RowMatrix &true_context, RowVector *context_grad, int norm) {
 
-  assert(l2_gradient && output_block.rows() == 1 && true_context.rows() == 1);
+  assert(context_grad && output_block.rows() == 1 && true_context.rows() == 1);
   assert(output_block.cols() == true_context.cols());
-  assert(output_block.cols() == l2_gradient->cols());
-  l2_gradient->setZero();
+  assert(output_block.cols() == context_grad->cols());
+  context_grad->setZero();
 
   const int context_size = output_block.cols();
 
-  double l2_loss = 0;
+  double context_loss = 0;
   for (int i = 0; i < context_size; ++i) {
-    (*l2_gradient)(i) = 0;
-    double e = true_context(0, i) - output_block(0, i);
-    l2_loss += e * e;
+    double e =  output_block(0, i) - true_context(0, i) ;
+    (*context_grad)(i) = (norm==1) ? 1 : e/context_size;
+		if (_DEBUG_MODE_judy) {
+      fprintf(stderr, "Loss gradient ---- i: %d, %f \n", i,(*context_grad)(i));
+    }
+    context_loss += (norm==1) ? fabs(e) :e * e;
   }
-  return sqrt(l2_loss);
+  return (norm==1) ? (context_loss/context_size)  : (context_loss/( 2 * context_size ));
 }
 
 void *RunThread(void *ptr) {
@@ -393,20 +396,26 @@ void *RunThread(void *ptr) {
       // |C| elements.
       const RowVector context_outputs =
           output.block(target - 1, vocab_portion, 1, nnet->cfg.context_size);
-
+			double context_loss=0;
+			
+			// Test Norm-1 or Norm-2?
+			int norm=1;
       if (target < seq_length) {
-        ComputeL2Loss(
+        context_loss = ComputeContextLoss(
             context_outputs,
             context_matrix.row(target), // predicted should be t (from t-1).
-            &loss_context_grad);
+            &loss_context_grad,norm);
       } else {
           // Now we're at the end of the sentence. Target word should be </s> (mapped to zero).
           // So Target context should also be its equivalent. We map it to 0.
-        ComputeL2Loss(
+        context_loss = ComputeContextLoss(
             context_outputs,
             zero_context, // predicted should be t (from t-1).
-            &loss_context_grad);
+            &loss_context_grad,norm);
       }
+			if (_DEBUG_MODE_judy) {
+					fprintf(stderr, " Context loss : %f \n", context_loss); 
+			}
 
       // We set the gradient to loss from context diffs. We later add the loss
       // from softmax/nce for the vocab portion.
