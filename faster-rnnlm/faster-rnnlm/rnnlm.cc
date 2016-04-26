@@ -15,10 +15,8 @@
 #include <string>
 #include <vector>
 
-// added by Pankesh //
- #include <map>
+#include <map>
 #include <fstream>
-// added by Pankesh //
 
 #include "faster-rnnlm/hierarchical_softmax.h"
 #include "faster-rnnlm/layers/interface.h"
@@ -73,8 +71,7 @@ double nce_unigram_min_cells = 5;
 };  // unnamed namespace
 
 // - lda
-// Added by Pankesh Bamotra
-// !TODO: Please make sure that the following files exit
+// Please make sure that the following files exit
 std::map< std::string, unsigned long> word_idx_dictionary;
 std::map< unsigned long, std::string> idx_word_dictionary;
 std::vector< std::vector<double> > betas;
@@ -225,18 +222,41 @@ void print_row_vector(RowVector vec) {
 // c_2, ... c_k as predictions for input contexts. So we don't know what to
 // predict for last word.
 void ComputeContextMatrix(NNet* nnet, const WordIndex *sen, RowMatrix *context_matrix) {
-
   if (context_matrix == NULL) {
     fprintf(stderr, "Provided a null context matrix. What did you expect?\n");
     return;
   }
   context_matrix->setZero();
   unsigned int sent_length = context_matrix->rows();
-  for (unsigned int i=0; i<sent_length; i++) {
-  	std::string curr_word(nnet->vocab.GetWordByIndex(sen[i]));
-        context_matrix->row(i) = get_beta_by_word(curr_word).row(0);
+  unsigned int i=1;
+  for (;i<sent_length; i++) {
+    std::string curr_word(nnet->vocab.GetWordByIndex(sen[i]));
+    context_matrix->row(i-1) = get_beta_by_word(curr_word).row(0);
+  }
+  context_matrix->row(i-1).setZero();
+}
+
+void ComputeContextMatrixWithPrev(NNet* nnet, const WordIndex *sen, RowMatrix *context_matrix, int prev=2) {
+  if (context_matrix == NULL) {
+    fprintf(stderr, "Provided a null context matrix. What did you expect?\n");
+    return;
+  }
+  context_matrix->setZero();
+  int sent_length = context_matrix->rows();
+  int i=1;
+
+  RowMatrix temp_context_matrix(sent_length, context_matrix->cols());
+  ComputeContextMatrix(nnet, sen, &temp_context_matrix);
+
+  for (; i<=sent_length; i++) {
+        std::string curr_word(nnet->vocab.GetWordByIndex(sen[i]));
+        context_matrix->row(i - 1) = get_beta_by_word(curr_word).row(0);
+        for (int j=i-2; (j >= 0) && (j >= (i - 1 - prev)); j--) {
+          context_matrix->row(i - 1) += temp_context_matrix.row(j);
+        }
   }
 }
+
 
 inline void PropagateForward(NNet* nnet, const WordIndex* sen, int sen_length, const RowMatrix& context_matrix, IRecUpdater* layer) {
   // Dimensions:
