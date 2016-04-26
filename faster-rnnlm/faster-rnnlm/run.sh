@@ -2,7 +2,7 @@ make -j5
 e=$?
 basedir='../benchmarks'
 data=$basedir/simple-examples/data
-hidden_size=30
+hidden_size=40
 mname="faster-rnnlm"
 rm -rf $basedir/models
 mkdir -p $basedir/models

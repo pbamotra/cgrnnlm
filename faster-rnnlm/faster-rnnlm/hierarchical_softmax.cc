@@ -182,8 +182,8 @@ HSTree::HSTree(int vocab_size, int layer_size, int arity, const vector<int>& chi
   }
 
   fprintf(stderr,
-      "Contructed HS: arity=%d, height=%d\n",
-      tree_->GetArity(), tree_->GetTreeHeight());
+      "Contructed HS: arity=%d, height=%d (layer_size=%d)\n",
+      tree_->GetArity(), tree_->GetTreeHeight(), layer_size);
 }
 
 HSTree* HSTree::CreateHuffmanTree(const Vocabulary& vocab, int layer_size, int arity) {

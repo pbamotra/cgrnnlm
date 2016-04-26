@@ -117,7 +117,11 @@ void NNet::Init() {
     fprintf(stderr, "ERROR layer type name must be less then %d\n", kMaxLayerTypeName);
     exit(1);
   }
-
+  if (cfg.layer_size <=  cfg.context_size + 1) {
+    fprintf(stderr, "ERROR layer_size(%lld) must be > context size %d + 1\n",
+            cfg.layer_size, cfg.context_size);
+    exit(1);
+  }
   fprintf(stderr,
       "Constructing RNN: layer_size=%"PRId64", layer_type=%s, layer_count=%d,"
       " maxent_hash_size=%"PRId64", maxent_order=%d, vocab_size=%d, use_nce=%d\n",
@@ -138,11 +142,14 @@ void NNet::Init() {
 
   maxent_layer.Init(cfg.maxent_hash_size);
 
+  // We subtract cfg.context_size in the computation to layersize for
+  // nce/softmax. In the layer_size output from RNN, the last context_size
+  // elements are used for context loss.
   if (cfg.use_nce) {
     nce = new NCE(use_cuda, use_cuda_memory_efficient,
-        cfg.nce_lnz, cfg.layer_size, vocab, cfg.maxent_hash_size);
+        cfg.nce_lnz, cfg.layer_size - cfg.context_size, vocab, cfg.maxent_hash_size);
   } else {
-    softmax_layer = HSTree::CreateHuffmanTree(vocab, cfg.layer_size, cfg.hs_arity);
+    softmax_layer = HSTree::CreateHuffmanTree(vocab, cfg.layer_size - cfg.context_size, cfg.hs_arity);
     // softmax_layer = HSTree::CreateRandomTree(vocab, cfg.layer_size, cfg.hs_arity, 0);
   }
 }

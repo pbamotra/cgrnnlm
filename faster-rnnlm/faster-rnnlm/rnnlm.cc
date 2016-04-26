@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <fenv.h>
 #include <inttypes.h>
 #include <math.h>
@@ -49,6 +50,7 @@ const OOVPolicy kOOVPolicy = kSkipSentence;
 // - common
 Real initial_lrate = 0.1, initial_maxent_lrate = 0.1;
 Real l2reg = 1e-6, maxent_l2reg = 1e-6;
+Real word_loss_weight = 1, context_loss_weight = 1;
 int bptt = 5, bptt_period = 6;
 Real rmsprop = -1;
 Real gradient_clipping = 1;
@@ -76,6 +78,7 @@ struct TrainThreadTask {
   const SimpleTimer* timer;
   int epoch, n_inner_epochs;
   Real lrate, maxent_lrate;
+  Real context_loss_weight, word_loss_weight;
   const std::string* train_file;
 
   // global
@@ -127,8 +130,13 @@ inline int CalculateMaxentHashIndices(
   return maxent_present;
 }
 
+// This thing may have to change. We may have to take words from the previous
+// sentence as well for LDA products.
+// TODO: Fix ordering of ContextMatrix. If it is of sen_length: c1...c_k, we use
+// c_2, ... c_k as predictions for input contexts. So we don't know what to
+// predict for last word.
 void ComputeContextMatrix(const WordIndex *sen, int sen_length,
-                          int context_size, RowMatrix* context_matrix) {
+                          int context_size, RowMatrix *context_matrix) {
   // TODO(pankesh/judy): Fill this up! It should have the LDA products. We
   // return 0s for now lol.
   // It must return a matrix of length sen_length x context_size. The i-th row
@@ -141,7 +149,7 @@ void ComputeContextMatrix(const WordIndex *sen, int sen_length,
   context_matrix->setZero();
 }
 
-inline void PropagateForward(NNet* nnet, const WordIndex* sen, int sen_length, IRecUpdater* layer) {
+inline void PropagateForward(NNet* nnet, const WordIndex* sen, int sen_length, const RowMatrix& context_matrix, IRecUpdater* layer) {
   // Dimensions:
   // nnet->embeddings: (|V| + |C|) x |H| (earlier it was |V| x |H|)
   // input: |S| x |H|, where |S| is length of sentence.
@@ -150,9 +158,6 @@ inline void PropagateForward(NNet* nnet, const WordIndex* sen, int sen_length, I
   // Return the last |C| rows of the ( (|V| + |C|) x h embeddings matrix).
   const RowMatrix context_embeddings = nnet->embeddings.bottomRows(nnet->cfg.context_size);
 
-  // TODO: Make this global instead of allocating each time here.
-  RowMatrix context_matrix(sen_length, nnet->cfg.context_size);
-  ComputeContextMatrix(sen, sen_length, nnet->cfg.context_size, &context_matrix);
 
   for (int i = 0; i < sen_length; ++i) {
     // We're doing a [|v| + |C|] row matrix multiplication with the embeddings
@@ -200,8 +205,12 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
     int seq_length = reader.sentence_length();
     Real sen_logprob = 0.0;
 
-    PropagateForward(nnet, sen, seq_length, rec_layer_updater);
+    RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
+    ComputeContextMatrix(sen, seq_length, nnet->cfg.context_size,
+                         &context_matrix);
+    PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
 
+    // TODO: Change this as well to use correct split for Context/Vocab.
     const RowMatrix& output = rec_layer_updater->GetOutputMatrix();
     if (!nnet->cfg.use_nce) {
       // Hierarchical Softmax
@@ -247,6 +256,29 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
   return entropy;
 }
 
+// Returns the L2 loss and sets the gradient in l2_gradient.
+// output_block: 1 x |C| matrix.
+// true_context: 1 x |C| matrix.
+// l2_gradient: 1 x |C| matrix
+double ComputeL2Loss(const RowMatrix &output_block,
+                     const RowMatrix &true_context, RowVector *l2_gradient) {
+
+  assert(l2_gradient && output_block.rows() == 1 && true_context.rows() == 1);
+  assert(output_block.cols() == true_context.cols());
+  assert(output_block.cols() == l2_gradient->cols());
+  l2_gradient->setZero();
+
+  const int context_size = output_block.cols();
+
+  double l2_loss = 0;
+  for (int i = 0; i < context_size; ++i) {
+    (*l2_gradient)(i) = 0;
+    double e = true_context(0, i) - output_block(0, i);
+    l2_loss += e * e;
+  }
+  return sqrt(l2_loss);
+}
+
 void *RunThread(void *ptr) {
   TrainThreadTask& task = *reinterpret_cast<TrainThreadTask*>(ptr);
   NNet* nnet = task.nnet;
@@ -265,6 +297,31 @@ void *RunThread(void *ptr) {
   int _DEBUG_MAX_READINGS = 2;
   int _SENTENCE_COUNTER = 0;
 
+  const int layer_size = nnet->cfg.layer_size;
+  // 0 to vocab_portion - 1 is for softmax/nce loss. 
+  // vocab_portion to layer_size - 1 is for conext loss.
+  const int vocab_portion = layer_size - nnet->cfg.context_size;
+  // The following two gradients are weighted separately to contribute to
+  // output_grad.row(i).
+  // We have the gradient from the vocab loss (either softmax or nce) here.
+  // We have a RowVector for nce and Real* for softmax. Strangely their
+  // interface is not uniform.
+  // TODO:set hs->layer_size.
+  RowVector loss_word_grad;
+  loss_word_grad.resize(vocab_portion);
+
+  // We have the L2 loss from the context loss here.
+  RowVector loss_context_grad(nnet->cfg.context_size);
+
+  // Used as prediction of next context for the last word in the sentence.
+  RowVector zero_context(nnet->cfg.context_size);
+  zero_context.setZero();
+
+  // We concatenate both vectors into this.
+  RowVector combined_grad;
+  combined_grad.resize(layer_size);
+  
+
   while (reader.Read()) {
     n_done_words_local += reader.sentence_length();
     if (n_done_words_local - n_last_report_at > kReportEveryWords) {
@@ -282,9 +339,11 @@ void *RunThread(void *ptr) {
 
       if (task.report) {
         float done_percent = static_cast<float>(*task.n_done_bytes) /
-            (n_total_bytes / task.n_inner_epochs + 1) * 100;
+                             (n_total_bytes / task.n_inner_epochs + 1) * 100;
         float speed = *task.n_done_words / (task.timer->Tick() * 1000 + 1e-5);
-        fprintf(stderr, "\rEpoch %2d  lr: %.2e/%.2e  progress: %6.2f%%  %.2f Kwords/sec  ",
+        fprintf(
+            stderr,
+            "\rEpoch %2d  lr: %.2e/%.2e  progress: %6.2f%%  %.2f Kwords/sec  ",
             task.epoch, task.lrate, task.maxent_lrate, done_percent, speed);
         if (task.report_train_entopy) {
           float train_entropy = train_logprob / log10(2) / n_done_words_local;
@@ -300,9 +359,12 @@ void *RunThread(void *ptr) {
     // Both <s> and </s> are mapped to zero
     const WordIndex* sen = reader.sentence();
     const int seq_length = reader.sentence_length();
+    RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
+    ComputeContextMatrix(sen, seq_length, nnet->cfg.context_size,
+                         &context_matrix);
 
     // Compute hidden layer for all words
-    PropagateForward(nnet, sen, seq_length, rec_layer_updater);
+    PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
 
     // Calculate criterion given hidden layers
     const RowMatrix& output = rec_layer_updater->GetOutputMatrix();
@@ -316,19 +378,57 @@ void *RunThread(void *ptr) {
               output_grad.rows(), output_grad.cols(), seq_length);
     }
 
+    
     for (int target = 1; target <= seq_length; ++target) {
-      const Real* output_row = output.row(target - 1).data();
-      Real* output_grad_row = output_grad.row(target - 1).data();
+      //const Real* output_row = output.row(target - 1).data();
+      //Real* output_grad_row = output_grad.row(target - 1).data();
+      
       WordIndex target_word = sen[target];
+
+      // Choose the last |C| elements to compute the context loss.
+      // The array is from output_grad[0...h-1] so we pick [h-(c)...h-1].
+      // (length |C|).
+      // block(i, j, p, q) gives a p x q matrix starting at (i, j).
+
+      // i = target - 1, j = 0, p = 1, q = |H| - |C| elements.
+      const RowVector vocab_outputs =
+          output.block(target - 1, 0, 1, vocab_portion);
+      // i = target - 1, j = |H| - |C| (0...|H| -|C| -1 are above), p = 1, q =
+      // |C| elements.
+      const RowVector context_outputs =
+          output.block(target - 1, vocab_portion, 1, nnet->cfg.context_size);
+
+      if (target < seq_length) {
+        ComputeL2Loss(
+            context_outputs,
+            context_matrix.row(target), // predicted should be t (from t-1).
+            &loss_context_grad);
+      } else {
+          // Now we're at the end of the sentence. Target word should be </s> (mapped to zero).
+          // So Target context should also be its equivalent. We map it to 0.
+        ComputeL2Loss(
+            context_outputs,
+            zero_context, // predicted should be t (from t-1).
+            &loss_context_grad);
+      }
+
+      // We set the gradient to loss from context diffs. We later add the loss
+      // from softmax/nce for the vocab portion.
+      output_grad.block(target - 1, vocab_portion, 1, nnet->cfg.context_size) = 
+          task.context_loss_weight * loss_context_grad;
 
       uint64_t ngram_hashes[MAX_NGRAM_ORDER] = {0};
       int maxent_present = CalculateMaxentHashIndices(nnet, sen, target, ngram_hashes);
 
+      loss_word_grad.setZero();
       if (!nnet->cfg.use_nce) {
-        const Real word_logprob = nnet->softmax_layer->PropagateForwardAndBackward(
-            task.report_train_entopy, target_word, ngram_hashes, maxent_present,
-            task.lrate, task.maxent_lrate, l2reg, maxent_l2reg, gradient_clipping,
-            output_row, output_grad_row, &nnet->maxent_layer);
+        const Real word_logprob =
+            nnet->softmax_layer->PropagateForwardAndBackward(
+                task.report_train_entopy, target_word, ngram_hashes,
+                maxent_present, task.lrate, task.maxent_lrate, l2reg,
+                maxent_l2reg, gradient_clipping, vocab_outputs.data(),
+                loss_word_grad.data(), &nnet->maxent_layer);
+
         if (task.report_train_entopy) {
           train_logprob -= word_logprob;
         }
@@ -339,10 +439,11 @@ void *RunThread(void *ptr) {
             next_random, nce_samples, sen, target, &sample);
 
         nce_updater->PropagateForwardAndBackward(
-            output.row(target - 1), target_word, ngram_hashes, maxent_present,
-            sample, task.lrate, l2reg, task.maxent_lrate, maxent_l2reg, gradient_clipping,
-            output_grad.row(target - 1), &nnet->maxent_layer);
+            vocab_outputs, target_word, ngram_hashes, maxent_present, sample,
+            task.lrate, l2reg, task.maxent_lrate, maxent_l2reg,
+            gradient_clipping, loss_word_grad, &nnet->maxent_layer);
       }
+      output_grad.block(target - 1, 0, 1, vocab_portion) = task.word_loss_weight * loss_word_grad;
     }
 
     rec_layer_updater->BackwardSequence(seq_length, GetNextRandom(&next_random), bptt_period, bptt);
@@ -460,6 +561,9 @@ void TrainLM(
       tasks[i].noise_generator = noise_generator;
       tasks[i].n_done_words = &n_done_words;
       tasks[i].n_done_bytes = &n_done_bytes;
+
+      tasks[i].context_loss_weight = context_loss_weight;
+      tasks[i].word_loss_weight = word_loss_weight; 
     }
     for (int i = 0; i < n_threads; i++) {
 #ifdef NOTHREAD
@@ -558,7 +662,11 @@ void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature
 
   std::vector<double> probs(nnet->vocab.size());
   IRecUpdater* updater = nnet->rec_layer->CreateUpdater();
-  PropagateForward(nnet, wids.data(), wids.size(), updater);
+
+  RowMatrix context_matrix(wids.size(), nnet->cfg.context_size);
+  ComputeContextMatrix(wids.data(), wids.size(), nnet->cfg.context_size,
+                       &context_matrix);
+  PropagateForward(nnet, wids.data(), wids.size(), context_matrix, updater);
   for (int sample_idx = 0; sample_idx < n_samples; ++sample_idx) {
     for (size_t i = 0; i < wids.size(); ++i) {
       printf("%s ", nnet->vocab.GetWordByIndex(wids[i]));
@@ -697,6 +805,8 @@ int main(int argc, char **argv) {
   opts.Add("bptt", "Length of truncated BPTT unfolding; set to zero to back-propagate through entire sentence", &bptt);
   opts.Add("bptt-skip", "Number of steps without BPTT; doesn't have any effect if bptt is 0", &bptt_skip);
   opts.Add("alpha", "Learning rate for recurrent and embedding weights", &initial_lrate);
+  opts.Add("word_loss_weight", "Loss weight from word prediction loss.", &word_loss_weight);
+  opts.Add("context_loss_weight", "Loss weight from context prediction loss.", &context_loss_weight);
   opts.Add("maxent-alpha", "Learning rate for maxent layer", &initial_maxent_lrate);
   opts.Add("beta", "Weight decay for recurrent and embedding weight, i.e. L2-regularization", &l2reg);
   opts.Add("maxent-beta", "Weight decay for maxent layer, i.e. L2-regularization", &maxent_l2reg);
