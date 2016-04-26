@@ -135,8 +135,7 @@ inline int CalculateMaxentHashIndices(
 // TODO: Fix ordering of ContextMatrix. If it is of sen_length: c1...c_k, we use
 // c_2, ... c_k as predictions for input contexts. So we don't know what to
 // predict for last word.
-void ComputeContextMatrix(const WordIndex *sen, int sen_length,
-                          int context_size, RowMatrix *context_matrix) {
+void ComputeContextMatrix(const WordIndex *sen, RowMatrix *context_matrix) {
   // TODO(pankesh/judy): Fill this up! It should have the LDA products. We
   // return 0s for now lol.
   // It must return a matrix of length sen_length x context_size. The i-th row
@@ -146,6 +145,8 @@ void ComputeContextMatrix(const WordIndex *sen, int sen_length,
     fprintf(stderr, "Provided a null context matrix. What did you expect?\n");
     return;
   }
+  // sentence_length can be found by context_matrix->rows();
+  // context_size can be found by context_matrix->cols();
   context_matrix->setZero();
 }
 
@@ -207,8 +208,7 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
     const int vocab_portion = nnet->VocabPortionOfLayerSize();
 
     RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
-    ComputeContextMatrix(sen, seq_length, nnet->cfg.context_size,
-                         &context_matrix);
+    ComputeContextMatrix(sen, &context_matrix);
     PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
 
     // TODO: Change this as well to use correct split for Context/Vocab.
@@ -356,8 +356,7 @@ void *RunThread(void *ptr) {
     const WordIndex* sen = reader.sentence();
     const int seq_length = reader.sentence_length();
     RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
-    ComputeContextMatrix(sen, seq_length, nnet->cfg.context_size,
-                         &context_matrix);
+    ComputeContextMatrix(sen, &context_matrix);
 
     // Compute hidden layer for all words
     PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
@@ -660,8 +659,7 @@ void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature
   IRecUpdater* updater = nnet->rec_layer->CreateUpdater();
 
   RowMatrix context_matrix(wids.size(), nnet->cfg.context_size);
-  ComputeContextMatrix(wids.data(), wids.size(), nnet->cfg.context_size,
-                       &context_matrix);
+  ComputeContextMatrix(wids.data(), &context_matrix);
   PropagateForward(nnet, wids.data(), wids.size(), context_matrix, updater);
   for (int sample_idx = 0; sample_idx < n_samples; ++sample_idx) {
     for (size_t i = 0; i < wids.size(); ++i) {
