@@ -306,7 +306,6 @@ void *RunThread(void *ptr) {
   // We have the gradient from the vocab loss (either softmax or nce) here.
   // We have a RowVector for nce and Real* for softmax. Strangely their
   // interface is not uniform.
-  // TODO:set hs->layer_size.
   RowVector loss_word_grad;
   loss_word_grad.resize(vocab_portion);
 
