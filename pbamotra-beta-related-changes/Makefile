@@ -2,7 +2,7 @@ NOTHREAD = 0 # set to 1 to disable threads
 
 CC = g++
 CFLAGS = -Wall -march=native -funroll-loops -g -D__STDC_FORMAT_MACROS
-CFLAGS += -I../ -DEIGEN_DONT_PARALLELIZE -std=c++0x # Added -std flag because we need std::std for beta file reading 	# for Eigen
+CFLAGS += -I../ -DEIGEN_DONT_PARALLELIZE -std=c++0x # Added -std flag because we need std::stod for beta file reading 	# for Eigen
 CFLAGS += $(shell $(CC) -dumpversion | awk '{if(NR==1 && $$1>="4.6") print "-Ofast"; else print "-O3";}')
 NVCC_CFLAGS = -O3 -march=native -funroll-loops
 LDFLAGS = -lm 
