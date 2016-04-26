@@ -118,7 +118,7 @@ void NNet::Init() {
     exit(1);
   }
   if (cfg.layer_size <=  cfg.context_size + 1) {
-    fprintf(stderr, "ERROR layer_size(%lld) must be > context size %d + 1\n",
+    fprintf(stderr, "ERROR layer_size(%ld) must be > context size %d + 1\n",
             cfg.layer_size, cfg.context_size);
     exit(1);
   }
