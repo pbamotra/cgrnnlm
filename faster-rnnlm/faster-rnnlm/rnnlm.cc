@@ -814,7 +814,7 @@ int main(int argc, char **argv) {
   opts.Echo("Early stopping options (let `ratio' be a ratio of previous epoch validation entropy to new one):");
   opts.Add("stop", "If `ratio' less than `stop' then start leaning rate decay", &bad_ratio);
   opts.Add("lr-decay-factor", "Learning rate decay factor", &lr_decay_factor);
-  opts.Add("context-size", "The size of the context vector.", &context_size);
+  opts.Add("context_size", "The size of the context vector.", &context_size);
   opts.Add("reject-threshold", "If (whats more) `ratio' less than `reject-threshold' then purge the epoch", &awful_ratio);
   opts.Add("retry", "Stop training once `ratio' has hit `stop' at least `retry' times", &max_bad_epochs);
   opts.Echo();
