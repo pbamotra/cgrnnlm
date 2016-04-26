@@ -24,7 +24,10 @@
 #include "faster-rnnlm/words.h"
 
 // set this mode to true when testing your changes and protect your printfs with this.
-bool _DEBUG_MODE = false;
+// Add a debug mode for each author separate.
+bool _DEBUG_MODE_judy = false;
+bool _DEBUG_MODE_pankesh = false;
+bool _DEBUG_MODE_sg = false;
 
 namespace {
 
@@ -306,7 +309,7 @@ void *RunThread(void *ptr) {
     RowMatrix& output_grad = rec_layer_updater->GetOutputGradMatrix();
     output_grad.topRows(seq_length).setZero();
 
-    if (_DEBUG_MODE) {
+    if (_DEBUG_MODE_sg) {
       fprintf(stderr, "Debug(sen=%d): output.size()=(%ld, %ld), "
                       "output_grad.size()=(%ld, %ld), seq_length=%d\n",
               _SENTENCE_COUNTER, output.rows(), output.cols(),
@@ -359,7 +362,7 @@ void *RunThread(void *ptr) {
     if (learn_recurrent) {
       rec_layer_updater->UpdateWeights(seq_length, task.lrate, l2reg, rmsprop, gradient_clipping);
     }
-    if (_DEBUG_MODE && ++_SENTENCE_COUNTER > _DEBUG_MAX_READINGS) {
+    if (_DEBUG_MODE_sg && ++_SENTENCE_COUNTER > _DEBUG_MAX_READINGS) {
         break;
     }
   }
