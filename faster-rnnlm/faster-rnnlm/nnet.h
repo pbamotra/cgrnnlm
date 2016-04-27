@@ -29,7 +29,6 @@ struct NNetConfig {
   int hs_arity;
   std::string layer_type;
   int context_size;
-  int context_choice;
 };
 
 

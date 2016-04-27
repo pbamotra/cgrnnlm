@@ -28,6 +28,7 @@ static void ReadHeader(FILE* file, NNetConfig* cfg, int* version_ptr) {
   }
   cfg->layer_size = quazi_layer_size % kVersionStepSize;
 
+  FreadAllOrDie(&cfg->context_size, sizeof(int), 1, file, error_message);
   FreadAllOrDie(&cfg->maxent_hash_size, sizeof(int64_t), 1, file, error_message);
   FreadAllOrDie(&cfg->maxent_order, sizeof(int), 1, file, error_message);
 
@@ -124,9 +125,9 @@ void NNet::Init() {
   }
   fprintf(stderr,
       "Constructing RNN: layer_size=%"PRId64", layer_type=%s, layer_count=%d,"
-      " maxent_hash_size=%"PRId64", maxent_order=%d, vocab_size=%d, use_nce=%d\n",
+      " maxent_hash_size=%"PRId64", maxent_order=%d, vocab_size=%d, context_size=%d, use_nce=%d\n",
       cfg.layer_size, cfg.layer_type.c_str(), cfg.layer_count, cfg.maxent_hash_size,
-      cfg.maxent_order, vocab.size(), static_cast<int>(cfg.use_nce));
+      cfg.maxent_order, vocab.size(), cfg.context_size, static_cast<int>(cfg.use_nce));
   embeddings.resize(vocab.size() + cfg.context_size, cfg.layer_size);
   fprintf(stderr, "In NNEtInit, embeddings size = (%ld, %ld)", embeddings.rows(), embeddings.cols());
   if (cfg.layer_size) {
@@ -169,6 +170,7 @@ void NNet::Save(const std::string& model_file) const {
 
   uint64_t encoded_layer_size = cfg.layer_size + kVersionStepSize * kCurrentVersion;
   fwrite(&encoded_layer_size, sizeof(int64_t), 1, file);
+  fwrite(&cfg.context_size, sizeof(int), 1, file);
   fwrite(&cfg.maxent_hash_size, sizeof(int64_t), 1, file);
   fwrite(&cfg.maxent_order, sizeof(int), 1, file);
 
@@ -185,14 +187,19 @@ void NNet::Save(const std::string& model_file) const {
   fwrite(&cfg.layer_count, sizeof(int), 1, file);
   fwrite(&cfg.hs_arity, sizeof(int), 1, file);
 
+  fprintf(stderr, "Dumping embeddings...\n");
   ::Dump(embeddings, file);
   if (cfg.use_nce) {
+  fprintf(stderr, "Dumping nce...\n");
     nce->Dump(file);
   } else {
+  fprintf(stderr, "Dumping softmax...\n");
     softmax_layer->Dump(file);
   }
+  fprintf(stderr, "Dumping rec-layer...\n");
   rec_layer->GetWeights()->Dump(file);
 
+  fprintf(stderr, "Dumping max-ent-layer...\n");
   maxent_layer.Dump(file);
   fclose(file);
 }
@@ -202,6 +209,7 @@ void NNet::SaveCompatible(const std::string& model_file) const {
   FILE* file = fopen(model_file.c_str(), "wb");
 
   fwrite(&cfg.layer_size, sizeof(int64_t), 1, file);
+  fwrite(&cfg.context_size, sizeof(int), 1, file);
   fwrite(&cfg.maxent_hash_size, sizeof(int64_t), 1, file);
   fwrite(&cfg.maxent_order, sizeof(int), 1, file);
 
