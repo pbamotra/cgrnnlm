@@ -71,10 +71,8 @@ double nce_unigram_min_cells = 5;
 };  // unnamed namespace
 
 // - lda
-typedef std::map<std::string, unsigned long> WordToLDAIndex;
 
 struct SimpleTimer;
-
 
 struct TrainThreadTask {
   // local
@@ -139,7 +137,7 @@ inline int CalculateMaxentHashIndices(
   return maxent_present;
 }
 
-// TODO: remove(argv)
+//TODO(judy): Move to context.
 void ReadLDAVocab(string dict_filepath, WordToLDAIndex* word_to_lda_index) {
     // TODO: dict_filepath should come from flag.
   std::fstream fin(dict_filepath.c_str());
@@ -154,7 +152,7 @@ void ReadLDAVocab(string dict_filepath, WordToLDAIndex* word_to_lda_index) {
 }
 
 // What is dimension here? K x V? or V x k? TODO
-// TODO(make this Eigen::Load)
+//TODO(judy): Move to context.
 void ReadBetaMatrix(string beta_filepath, RowMatrix *beta_matrix,
                     int num_topics, int vocab_size) {
   std::ifstream indata;
@@ -183,6 +181,7 @@ void ReadBetaMatrix(string beta_filepath, RowMatrix *beta_matrix,
 }
 
 // beta_matrix is of size num_topics x vocab_size
+//TODO(judy): Move to context (main call from here).
 void GetBetaByWord(std::string word, const RowMatrix& beta_matrix,
         const WordToLDAIndex& word_to_lda_index, RowVector* beta_column) {
   assert(beta_column && beta_matrix.rows() > 0 && beta_matrix.cols() > 0);
@@ -196,6 +195,7 @@ void GetBetaByWord(std::string word, const RowMatrix& beta_matrix,
   *beta_column = word_to_lda_index.col(index);
 }
 
+//TODO(judy): Move to context class.
 // This thing may have to change. We may have to take words from the previous
 // sentence as well for LDA products.
 // TODO: Add Beta matrix to parameters here and send to get_beta_by_word.
@@ -205,15 +205,16 @@ void ComputeContextMatrixChoice1(NNet *nnet, const WordIndex *sen,
                                  RowMatrix *context_matrix) {
   for (int i = 0; i < context_matrix->rows(); i++) {
     std::string current_word(nnet->vocab.GetWordByIndex(sen[i]));
-    GetBetaByWord(current_word, beta_matrix, word_to_lda_index,
-                  &context_matrix->row(i));
+    nnet->context.GetBetaByWord(current_word, &context_matrix->row(i))
   }
 }
 
+//TODO(judy): Move to context class.
 void ComputeContextMatrixChoice2(NNet *nnet, const WordIndex *sen,
                                  const RowMatrix &beta_matrix,
                                  const WordToLDAIndex& word_to_lda_index,
                                  RowMatrix *context_matrix) {
+//TODO(judy): Move to context class constructor.
   const int prev = 2;
   int sent_length = context_matrix->rows();
   RowMatrix temp_context_matrix;
@@ -232,22 +233,13 @@ void ComputeContextMatrixChoice2(NNet *nnet, const WordIndex *sen,
   }
 }
 
-void ComputeContextMatrix(NNet *nnet, const WordIndex *sen,
-                          const RowMatrix &beta_matrix,
-                          const WordToLDAIndex &word_to_lda_index,
-                          RowMatrix *context_matrix) {
+void ComputeContextMatrix(NNet *nnet, RowMatrix *context_matrix) {
   if (context_matrix == NULL) {
     fprintf(stderr, "Provided a null context matrix. What did you expect?\n");
     return;
   }
   context_matrix->setZero();
-  if (nnet->cfg.context_choice == 1) {
-    ComputeContextMatrixChoice1(nnet, sen, beta_matrix, word_to_lda_index,
-                                context_matrix);
-  } else {
-    ComputeContextMatrixChoice2(nnet, sen, beta_matrix, word_to_lda_index,
-                                context_matrix);
-  }
+  nnet->context->ComputeContext(nnet, sen, context_matrix); 
 }
 
 inline void PropagateForward(NNet* nnet, const WordIndex* sen, int sen_length, const RowMatrix& context_matrix, IRecUpdater* layer) {
@@ -285,8 +277,6 @@ bool Exists(const std::string& fname) {
 //
 // if print_logprobs is true, -log10(Prob(sentence)) is printed for each sentence in the file
 Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bool accurate_nce,
-                          const RowMatrix &beta_matrix,
-                          const WordToLDAIndex &word_to_lda_index
         ) {
   IRecUpdater* rec_layer_updater = nnet->rec_layer->CreateUpdater();
   bool kAutoInsertUnk = (kOOVPolicy == kConvertToUnk);
@@ -311,7 +301,7 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
     const int vocab_portion = nnet->VocabPortionOfLayerSize();
 
     RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
-    ComputeContextMatrix(nnet, sen, beta_matrix, word_to_lda_index, &context_matrix);
+    ComputeContextMatrix(nnet, sen,  &context_matrix);
     PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
 
     // TODO: Change this as well to use correct split for Context/Vocab.
@@ -469,7 +459,7 @@ void *RunThread(void *ptr) {
     const WordIndex* sen = reader.sentence();
     const int seq_length = reader.sentence_length();
     RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
-    ComputeContextMatrix(nnet, sen, task.beta_matrix, task.word_to_lda_index, &context_matrix);
+    ComputeContextMatrix(nnet, sen, &context_matrix);
 
     // Compute hidden layer for all words
     PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
@@ -596,8 +586,6 @@ void TrainLM(
     const std::string& model_weight_file,
     const std::string& train_file, const std::string& valid_file,
     bool show_progress, bool show_train_entropy, int n_threads, int n_inner_epochs,
-    const RowMatrix &beta_matrix,
-    const WordToLDAIndex &word_to_lda_index,
     NNet* nnet) {
   NNet* noise_net = NULL;
   INoiseGenerator* noise_generator = NULL;
@@ -680,9 +668,6 @@ void TrainLM(
 
       tasks[i].context_loss_weight = context_loss_weight;
       tasks[i].word_loss_weight = word_loss_weight;
-
-      tasks[i].beta_matrix_ptr = &beta_matrix;
-      tasks[i].word_to_lda_index_ptr = &word_to_lda_index;
     }
     for (int i = 0; i < n_threads; i++) {
 #ifdef NOTHREAD
@@ -749,7 +734,7 @@ void TrainLM(
 }
 
 
-void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature, const RowMatrix& beta_matrix, const WordToLDAIndex& word_to_lda_index) {
+void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature) {
   std::vector<WordIndex> wids;
   {
     char buffer[MAX_STRING];

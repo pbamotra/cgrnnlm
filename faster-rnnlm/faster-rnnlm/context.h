@@ -10,13 +10,15 @@
 #include "faster-rnnlm/settings.h"
 #include "faster-rnnlm/util.h"
 
-
+typedef std::map<std::string, unsigned long> WordToLDAIndex;
 class Context {
-    Context(std::string dict_filepath, string beta_filepath, int num_topics) {
+    Context(int choice, std::string dict_filepath, string beta_filepath, int num_topics) {
 
     }
 
-
+    WordToLDAIndex* word_to_lda_index;
+    RowMatrix* beta_matrix;
+    int choice;
 };
 
 struct NNet {
