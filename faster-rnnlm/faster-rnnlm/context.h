@@ -15,6 +15,9 @@ class Context {
     Context(int choice, std::string dict_filepath, string beta_filepath, int num_topics) {
 
     }
+		~Context();
+
+		void ComputeContext(NNet* nnet, const WordIndex *sen, RowMatrix *context_matrix);
 
     WordToLDAIndex* word_to_lda_index;
     RowMatrix* beta_matrix;

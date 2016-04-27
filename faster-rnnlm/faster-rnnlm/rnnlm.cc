@@ -233,7 +233,7 @@ void ComputeContextMatrixChoice2(NNet *nnet, const WordIndex *sen,
   }
 }
 
-void ComputeContextMatrix(NNet *nnet, RowMatrix *context_matrix) {
+void ComputeContextMatrix(NNet *nnet, RowMatrix *context_matrix, const WordIndex *sen) {
   if (context_matrix == NULL) {
     fprintf(stderr, "Provided a null context matrix. What did you expect?\n");
     return;
@@ -857,6 +857,7 @@ int main(int argc, char **argv) {
 #ifdef DETECT_FPE
   feenableexcept(FE_ALL_EXCEPT & ~FE_INEXACT & ~FE_UNDERFLOW);
 #endif
+	// TODO: put into context
   read_lda_vocab(argv);
   read_beta_matrix();
   std::string layer_type = "sigmoid";
@@ -879,6 +880,8 @@ int main(int argc, char **argv) {
   // If we use LDA, context size is num_topics.
   int context_size = 10;
   int context_choice = 1;
+	std::string dict_filepath = "";
+	std::string beta_filepath = "";
 
   SimpleOptionParser opts;
   opts.Echo("Fast Recurrent Neural Network Language Model");
@@ -912,6 +915,8 @@ int main(int argc, char **argv) {
   opts.Add("bptt-skip", "Number of steps without BPTT; doesn't have any effect if bptt is 0", &bptt_skip);
   opts.Add("alpha", "Learning rate for recurrent and embedding weights", &initial_lrate);
   opts.Add("context_choice", "The context choice", &context_choice);
+	opts.Add("dict_filepath", "Dictionary file path", &dict_filepath);
+	opts.Add("beta_filepath", "Beta file path" , &beta_filepath);
   opts.Add("word_loss_weight", "Loss weight from word prediction loss.", &word_loss_weight);
   opts.Add("context_loss_weight", "Loss weight from context prediction loss.", &context_loss_weight);
   opts.Add("maxent-alpha", "Learning rate for maxent layer", &initial_maxent_lrate);
@@ -922,6 +927,7 @@ int main(int argc, char **argv) {
   opts.Add("stop", "If `ratio' less than `stop' then start leaning rate decay", &bad_ratio);
   opts.Add("lr-decay-factor", "Learning rate decay factor", &lr_decay_factor);
   opts.Add("context_size", "The size of the context vector.", &context_size);
+
   opts.Add("reject-threshold", "If (whats more) `ratio' less than `reject-threshold' then purge the epoch", &awful_ratio);
   opts.Add("retry", "Stop training once `ratio' has hit `stop' at least `retry' times", &max_bad_epochs);
   opts.Echo();
@@ -1000,6 +1006,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Constructed a vocabulary: %d words\n", vocab.size());
   }
 
+	//TODO(judy): NNet add Context
   // Construct/load neural network
   const std::string model_weight_file = model_vocab_file + ".nnet";
   NNet* main_nnet = NULL;
