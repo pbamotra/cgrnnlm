@@ -15,9 +15,15 @@ class Configuration(object):
             #print 'Adding flag: -%s %s' % (flag_name, val)
             self.flags.append('--%s %s' % (flag_name, val))
 
+    def _MakeDirs(self, log_dir):
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+
     def Run(self):
         cmd = './rnnlm %s' % ' '.join(self.flags)
-        log_file = '%s.log.txt' % self.GetModelName()
+        log_dir = 'logs'
+        self._MakeDirs(log_dir)
+        log_file = os.path.join(log_dir, '%s.log.txt' % self.GetModelName())
         _RunCmd(cmd.split(' '), log_file)
         test_entropy = self.GetTestEntropy(log_file)
         print 'Results: Model %s, Test Entropy: %s' % (self.GetModelName(), test_entropy) 
@@ -33,8 +39,7 @@ class Configuration(object):
 
     def _AddExecutionFlags(self, model_file, train_file, validation_file, test_file):
         model_dir = os.path.dirname(model_file)
-        if not os.path.exists(model_dir):
-            os.makedirs(model_dir)
+        self._MakeDirs(model_dir)
         self.AddFlag('train_and_test', 1)
         self.AddFlag('rnnlm', model_file)
         self.AddFlag('train', train_file)
