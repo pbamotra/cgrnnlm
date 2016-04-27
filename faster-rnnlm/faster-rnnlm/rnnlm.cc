@@ -884,6 +884,8 @@ int main(int argc, char **argv) {
   Real generate_temperature = 1;
   int bptt_skip = bptt_period - bptt;
 
+  int train_and_test = 0;
+
   // If we use LDA, context size is num_topics.
   int context_size = 10;
 
@@ -902,6 +904,7 @@ int main(int argc, char **argv) {
   opts.Add("direct", "Size of maxent layer in millions", &maxent_hash_size);
   opts.Add("direct-order", "Maximum order of ngram features", &maxent_order);
   opts.Add("test", "Test file; if not empty, evaluation mode is enabled, i.e. no training", &test_file);
+  opts.Add("train_and_test", "Set to >0 int to do both training and testing. Specify test file with -test.", &train_and_test);
   opts.Add("epoch-per-file", "Treat one pass over the train file as given number of epochs (usefull for big datasets)", &n_inner_epochs);
   opts.Add("seed", "Random seed for weight initialization and sampling", &random_seed);
   opts.Add("threads", "Number of threads to use; optimal value is the number of physical cores on a CPU", &n_threads);
@@ -973,6 +976,14 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  if (train_and_test) {
+    if (test_file.empty() || train_file.empty()) {
+      fprintf(stderr, "Both train file and test file needs to be provided if "
+                      "-train_and_test 1 is used.");
+      return 1;
+    }
+  }
+
   if (maxent_hash_size == 0 || maxent_order == 0) {
     maxent_hash_size = 0;
     maxent_order = 0;
@@ -1034,22 +1045,39 @@ int main(int argc, char **argv) {
     show_train_entropy = false;
   }
 
-  if (n_samples > 0) {
-    SampleFromLM(main_nnet, random_seed, n_samples, generate_temperature);
-  } else if (!test_file.empty()) {
-    // Apply mode
-    const bool kPrintLogprobs = false;
-    Real test_enropy = EvaluateLM(main_nnet, test_file, kPrintLogprobs, nce_accurate_test);
-    if (!main_nnet->cfg.use_nce || nce_accurate_test) {
-      fprintf(stderr, "Test entropy %f\n", test_enropy);
+  fprintf(stderr, "train_and_test = %d", train_and_test);
+  if (train_and_test) {
+
+    fprintf(stderr, "here");
+    TrainLM(model_weight_file, train_file, valid_file, show_progress,
+            show_train_entropy, n_threads, n_inner_epochs, main_nnet);
+    Real test_entropy =
+          EvaluateLM(main_nnet, test_file, false, nce_accurate_test);
+      if (!main_nnet->cfg.use_nce || nce_accurate_test) {
+        fprintf(stderr, "Test entropy %f\n", test_entropy);
+      } else {
+        fprintf(stderr, "Use -nce-accurate-test to calculate entropy\n");
+      }
+  }
+
+  else {
+    if (n_samples > 0) {
+      SampleFromLM(main_nnet, random_seed, n_samples, generate_temperature);
+    } else if (!test_file.empty()) {
+      // Apply mode
+      const bool kPrintLogprobs = false;
+      Real test_enropy =
+          EvaluateLM(main_nnet, test_file, kPrintLogprobs, nce_accurate_test);
+      if (!main_nnet->cfg.use_nce || nce_accurate_test) {
+        fprintf(stderr, "Test entropy %f\n", test_enropy);
+      } else {
+        fprintf(stderr, "Use -nce-accurate-test to calculate entropy\n");
+      }
     } else {
-      fprintf(stderr, "Use -nce-accurate-test to calculate entropy\n");
+      // Train mode
+      TrainLM(model_weight_file, train_file, valid_file, show_progress,
+              show_train_entropy, n_threads, n_inner_epochs, main_nnet);
     }
-  } else {
-    // Train mode
-    TrainLM(
-        model_weight_file, train_file, valid_file,
-        show_progress, show_train_entropy, n_threads, n_inner_epochs, main_nnet);
   }
 
   delete main_nnet;
