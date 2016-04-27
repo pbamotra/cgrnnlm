@@ -1,5 +1,5 @@
-#ifndef FASTER_RNNLM_NNET_H_
-#define FASTER_RNNLM_NNET_H_
+#ifndef FASTER_RNNLM_CONTEXT_H_
+#define FASTER_RNNLM_CONTEXT_H_
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -10,28 +10,14 @@
 #include "faster-rnnlm/settings.h"
 #include "faster-rnnlm/util.h"
 
-class NCE;
-class Vocabulary;
-class IRecLayer;
+
+class Context {
+    Context(std::string dict_filepath, string beta_filepath, int num_topics) {
+
+    }
 
 
-struct NNetConfig {
-  int64_t layer_size;
-  int layer_count;
-  uint64_t maxent_hash_size;
-  int maxent_order;
-
-  bool use_nce;
-  Real nce_lnz;
-
-  bool reverse_sentence;
-
-  int hs_arity;
-  std::string layer_type;
-  int context_size;
-  int context_choice;
 };
-
 
 struct NNet {
   NNet(const Vocabulary& vocab, const NNetConfig& cfg, bool use_cuda,
@@ -74,4 +60,4 @@ struct NNet {
   void SaveCompatible(const std::string& model_file) const;
 };
 
-#endif  // FASTER_RNNLM_NNET_H_
+#endif  // FASTER_RNNLM_CONTEXT_H_
