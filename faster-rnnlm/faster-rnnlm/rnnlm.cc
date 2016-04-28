@@ -789,8 +789,8 @@ int main(int argc, char **argv) {
   opts.Add("generate-samples", "Number of sentences to generate in sampling mode", &n_samples);
   opts.Add("generate-temperature", "Softmax temperature (use lower values to get robuster results)", &generate_temperature);
   opts.Add("hidden", "Size of embedding and hidden layers", &layer_size);
-  opts.Add("hidden-count", "Count of hidden layers; all hidden layers have the same type and size", &layer_count);
-  opts.Add("hidden-type", "Hidden layer activation (sigmoid, tanh, relu, gru, gru-bias, gru-insyn, gru-full)", &layer_type);
+  opts.Add("hidden_count", "Count of hidden layers; all hidden layers have the same type and size", &layer_count);
+  opts.Add("hidden_type", "Hidden layer activation (sigmoid, tanh, relu, gru, gru-bias, gru-insyn, gru-full)", &layer_type);
   opts.Add("arity", "Arity of the HS tree", &hs_arity);
   opts.Add("direct", "Size of maxent layer in millions", &maxent_hash_size);
   opts.Add("direct-order", "Maximum order of ngram features", &maxent_order);
