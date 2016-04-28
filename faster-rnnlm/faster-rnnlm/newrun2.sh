@@ -1,3 +1,4 @@
+#!/bin/bash -x
 make -j5
 e=$?
 basedir='../benchmarks'

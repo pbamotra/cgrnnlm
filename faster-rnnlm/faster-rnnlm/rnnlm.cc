@@ -22,7 +22,6 @@
 #include "faster-rnnlm/layers/interface.h"
 #include "faster-rnnlm/nce.h"
 #include "faster-rnnlm/nnet.h"
-#include "faster-rnnlm/context.h"
 #include "faster-rnnlm/program_options.h"
 #include "faster-rnnlm/settings.h"
 #include "faster-rnnlm/util.h"
@@ -71,7 +70,16 @@ double nce_unigram_power = 1;
 double nce_unigram_min_cells = 5;
 };  // unnamed namespace
 
+// - lda
+// Please make sure that the following files exit
+std::map< std::string, unsigned long> word_idx_dictionary;
+std::map< unsigned long, std::string> idx_word_dictionary;
+std::vector< std::vector<double> > betas;
+std::string beta_filepath = "lda_betas.csv";
+std::string dict_filepath = "dictionary.ssv";
+
 struct SimpleTimer;
+
 
 struct TrainThreadTask {
   // local
@@ -133,6 +141,123 @@ inline int CalculateMaxentHashIndices(
   return maxent_present;
 }
 
+int read_lda_vocab(char **argv) {
+  std::fstream fin(dict_filepath.c_str());
+
+  if (!fin) {
+    fprintf(stderr, "Error, could not open file.");
+    return -1;
+  }
+  std::string word;
+  unsigned long index;
+
+  while(fin >> index  >> word) {
+    word_idx_dictionary[word] = index;
+    idx_word_dictionary[index] = word;
+  }
+
+  fprintf(stdout, "WORD_IDX dict size is %lu\n", word_idx_dictionary.size());
+  fprintf(stdout, "IDX_WORD dict size is %lu\n", idx_word_dictionary.size());
+  return 0;
+}
+
+int read_beta_matrix() {
+  std::ifstream indata;
+  indata.open(beta_filepath.c_str());
+  std::string line;
+
+  while (std::getline(indata, line))
+  {
+    std::stringstream          lineStream(line);
+    std::string                cell;
+    std::vector< double>       curr_row;
+    while (std::getline(lineStream, cell, ','))
+    {
+      curr_row.push_back(std::stod(cell));
+    }
+    betas.push_back(curr_row);
+  }
+  fprintf(stdout, "Size of beta matrix is %lux%lu\n", betas.size(), betas[0].size());
+  return 0;
+}
+
+RowVector get_beta_by_word(std::string word) {
+  unsigned long n_beta_rows;
+  unsigned long n_beta_cols;
+
+  n_beta_rows = betas.size();
+  n_beta_cols = betas[0].size();
+  if (n_beta_rows > 0 && n_beta_cols > 0) {
+    bool word_in_dict = word_idx_dictionary.count(word) == 1;
+
+    RowVector result;
+    result.resize(1, n_beta_rows);
+    result.setZero();
+
+    if (word_in_dict) {
+      unsigned long index = word_idx_dictionary[word];
+      if (n_beta_cols > index) {
+        for(unsigned long row=0; row<n_beta_rows; row++) {
+	  result(0, row) = betas[row][index];
+   	}
+      }
+    }
+    return result;
+  } else {
+    fprintf(stderr, "Beta matrix is empty");
+    std::exit(1);
+  }
+}
+
+void print_row_vector(RowVector vec) {
+  for(unsigned int i=0; i<vec.size(); i++) {
+    fprintf(stdout, "%f ", vec(0, i));
+  }
+  fprintf(stdout, "\n");
+}
+
+// This thing may have to change. We may have to take words from the previous
+// sentence as well for LDA products.
+// TODO: Fix ordering of ContextMatrix. If it is of sen_length: c1...c_k, we use
+// c_2, ... c_k as predictions for input contexts. So we don't know what to
+// predict for last word.
+void ComputeContextMatrix(NNet* nnet, const WordIndex *sen, RowMatrix *context_matrix) {
+  if (context_matrix == NULL) {
+    fprintf(stderr, "Provided a null context matrix. What did you expect?\n");
+    return;
+  }
+  context_matrix->setZero();
+  unsigned int sent_length = context_matrix->rows();
+  unsigned int i=1;
+  for (;i<sent_length; i++) {
+    std::string curr_word(nnet->vocab.GetWordByIndex(sen[i]));
+    context_matrix->row(i-1) = get_beta_by_word(curr_word).row(0);
+  }
+  context_matrix->row(i-1).setZero();
+}
+
+void ComputeContextMatrixWithPrev(NNet* nnet, const WordIndex *sen, RowMatrix *context_matrix, int prev=2) {
+  if (context_matrix == NULL) {
+    fprintf(stderr, "Provided a null context matrix. What did you expect?\n");
+    return;
+  }
+  context_matrix->setZero();
+  int sent_length = context_matrix->rows();
+  int i=1;
+
+  RowMatrix temp_context_matrix(sent_length, context_matrix->cols());
+  ComputeContextMatrix(nnet, sen, &temp_context_matrix);
+
+  for (; i<=sent_length; i++) {
+        std::string curr_word(nnet->vocab.GetWordByIndex(sen[i]));
+        context_matrix->row(i - 1) = get_beta_by_word(curr_word).row(0);
+        for (int j=i-2; (j >= 0) && (j >= (i - 1 - prev)); j--) {
+          context_matrix->row(i - 1) += temp_context_matrix.row(j);
+        }
+  }
+}
+
+
 inline void PropagateForward(NNet* nnet, const WordIndex* sen, int sen_length, const RowMatrix& context_matrix, IRecUpdater* layer) {
   // Dimensions:
   // nnet->embeddings: (|V| + |C|) x |H| (earlier it was |V| x |H|)
@@ -190,11 +315,11 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
     Real sen_logprob = 0.0;
     const int vocab_portion = nnet->VocabPortionOfLayerSize();
 
-    //RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
-    //ComputeContextMatrix(nnet, sen, &context_matrix);
-		nnet->ComputeContextMatrix(sen, seq_length);
-    PropagateForward(nnet, sen, seq_length, *(nnet->context->context_matrix), rec_layer_updater);
+    RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
+    ComputeContextMatrix(nnet, sen, &context_matrix);
+    PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
 
+    // TODO: Change this as well to use correct split for Context/Vocab.
     const RowMatrix& full_output = rec_layer_updater->GetOutputMatrix();
     const RowMatrix& output = full_output.leftCols(vocab_portion);
     if (!nnet->cfg.use_nce) {
@@ -241,12 +366,6 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
   return entropy;
 }
 
-double GetSign(double e) {
-    if (fabs(e) < 0.001) return 0;
-    if (e < 0.001) return -1;
-    return 1;
-}
-
 // Returns the L2 loss and sets the gradient in context_grad.
 // output_block: 1 x |C| matrix.
 // true_context: 1 x |C| matrix.
@@ -264,7 +383,7 @@ double ComputeContextLoss(const RowMatrix &output_block,
   double context_loss = 0;
   for (int i = 0; i < context_size; ++i) {
     double e =  output_block(0, i) - true_context(0, i) ;
-    (*context_grad)(i) = (norm==1) ? GetSign(e) : e/context_size;
+    (*context_grad)(i) = (norm==1) ? 1 : e/context_size;
 		if (_DEBUG_MODE_judy) {
       fprintf(stderr, "Loss gradient ---- i: %d, %f \n", i,(*context_grad)(i));
     }
@@ -347,11 +466,11 @@ void *RunThread(void *ptr) {
     // Both <s> and </s> are mapped to zero
     const WordIndex* sen = reader.sentence();
     const int seq_length = reader.sentence_length();
-    //RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
-    nnet->ComputeContextMatrix(sen, seq_length);
+    RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
+    ComputeContextMatrix(nnet, sen, &context_matrix);
 
     // Compute hidden layer for all words
-    PropagateForward(nnet, sen, seq_length, *(nnet->context->context_matrix), rec_layer_updater);
+    PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
 
     // Calculate criterion given hidden layers
     const RowMatrix& output = rec_layer_updater->GetOutputMatrix();
@@ -384,29 +503,26 @@ void *RunThread(void *ptr) {
       // |C| elements.
       const RowVector context_outputs =
           output.block(target - 1, vocab_portion, 1, nnet->cfg.context_size);
-      double context_loss = 0;
-
-      // Test Norm-1 or Norm-2?
-      int norm = 1;
+			double context_loss=0;
+			
+			// Test Norm-1 or Norm-2?
+			int norm=1;
       if (target < seq_length) {
-        context_loss =
-            ComputeContextLoss(context_outputs,
-                               nnet->context->context_matrix->row(
-                                   target), // predicted should be t (from t-1).
-                               &loss_context_grad,
-                               norm);
+        context_loss = ComputeContextLoss(
+            context_outputs,
+            context_matrix.row(target), // predicted should be t (from t-1).
+            &loss_context_grad,norm);
       } else {
-        // Now we're at the end of the sentence. Target word should be </s>
-        // (mapped to zero).
-        // So Target context should also be its equivalent. We map it to 0.
+          // Now we're at the end of the sentence. Target word should be </s> (mapped to zero).
+          // So Target context should also be its equivalent. We map it to 0.
         context_loss = ComputeContextLoss(
             context_outputs,
             zero_context, // predicted should be t (from t-1).
-            &loss_context_grad, norm);
+            &loss_context_grad,norm);
       }
-      if (_DEBUG_MODE_judy) {
-        fprintf(stderr, " Context loss : %f \n", context_loss);
-      }
+			if (_DEBUG_MODE_judy) {
+					fprintf(stderr, " Context loss : %f \n", context_loss); 
+			}
 
       // We set the gradient to loss from context diffs. We later add the loss
       // from softmax/nce for the vocab portion.
@@ -414,8 +530,7 @@ void *RunThread(void *ptr) {
           task.context_loss_weight * loss_context_grad;
 
       uint64_t ngram_hashes[MAX_NGRAM_ORDER] = {0};
-      int maxent_present =
-          CalculateMaxentHashIndices(nnet, sen, target, ngram_hashes);
+      int maxent_present = CalculateMaxentHashIndices(nnet, sen, target, ngram_hashes);
 
       loss_word_grad.setZero();
       if (!nnet->cfg.use_nce) {
@@ -475,29 +590,27 @@ void *RunThread(void *ptr) {
 #endif
 }
 
-void TrainLM(const std::string &model_weight_file,
-             const std::string &train_file, const std::string &valid_file,
-             bool show_progress, bool show_train_entropy, int n_threads,
-             int n_inner_epochs, NNet *nnet) {
-  NNet *noise_net = NULL;
-  INoiseGenerator *noise_generator = NULL;
+void TrainLM(
+    const std::string& model_weight_file,
+    const std::string& train_file, const std::string& valid_file,
+    bool show_progress, bool show_train_entropy, int n_threads, int n_inner_epochs,
+    NNet* nnet) {
+  NNet* noise_net = NULL;
+  INoiseGenerator* noise_generator = NULL;
   if (nnet->cfg.use_nce) {
     if (nce_maxent_model_weight_file[0] != 0) {
       const bool kUseCuda = true;
       const bool kUseCudaMemoryEfficient = true;
-      noise_net = new NNet(nnet->vocab, nce_maxent_model_weight_file, kUseCuda,
-                           kUseCudaMemoryEfficient);
+      noise_net = new NNet(nnet->vocab, nce_maxent_model_weight_file, kUseCuda, kUseCudaMemoryEfficient);
       if (noise_net->cfg.layer_size != 0) {
-        fprintf(stderr, "ERROR: Cannot initialize HSMaxEntNoiseGenerator "
-                        "(layer size != 0)\n");
+        fprintf(stderr, "ERROR: Cannot initialize HSMaxEntNoiseGenerator (layer size != 0)\n");
         exit(1);
       }
 
       {
         const bool kPrintLogprobs = false;
         const bool kNCEAccurate = true;
-        Real test_enropy =
-            EvaluateLM(noise_net, valid_file, kPrintLogprobs, kNCEAccurate);
+        Real test_enropy = EvaluateLM(noise_net, valid_file, kPrintLogprobs, kNCEAccurate);
         fprintf(stderr, "Noise Model Valid entropy %f\n", test_enropy);
       }
 
@@ -662,10 +775,9 @@ void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature
   std::vector<double> probs(nnet->vocab.size());
   IRecUpdater* updater = nnet->rec_layer->CreateUpdater();
 
-  //RowMatrix context_matrix(wids.size(), nnet->cfg.context_size);
-  //ComputeContextMatrix(nnet, wids.data(), &context_matrix);
-  nnet->ComputeContextMatrix(wids.data(), wids.size());
-  PropagateForward(nnet, wids.data(), wids.size(), *(nnet->context->context_matrix), updater);
+  RowMatrix context_matrix(wids.size(), nnet->cfg.context_size);
+  ComputeContextMatrix(nnet, wids.data(), &context_matrix);
+  PropagateForward(nnet, wids.data(), wids.size(), context_matrix, updater);
   for (int sample_idx = 0; sample_idx < n_samples; ++sample_idx) {
     for (size_t i = 0; i < wids.size(); ++i) {
       printf("%s ", nnet->vocab.GetWordByIndex(wids[i]));
@@ -753,8 +865,8 @@ int main(int argc, char **argv) {
 #ifdef DETECT_FPE
   feenableexcept(FE_ALL_EXCEPT & ~FE_INEXACT & ~FE_UNDERFLOW);
 #endif
-  //read_lda_vocab(argv);
-  //read_beta_matrix();
+  read_lda_vocab(argv);
+  read_beta_matrix();
   std::string layer_type = "sigmoid";
   int layer_size = 100, maxent_order = 0, random_seed = 0, hs_arity = 2;
   uint64_t maxent_hash_size = 0;
@@ -776,9 +888,6 @@ int main(int argc, char **argv) {
 
   // If we use LDA, context size is num_topics.
   int context_size = 10;
-  int context_choice = 1;
-  std::string dict_filepath = "";
-  std::string beta_filepath = "";
 
   SimpleOptionParser opts;
   opts.Echo("Fast Recurrent Neural Network Language Model");
@@ -822,8 +931,6 @@ int main(int argc, char **argv) {
   opts.Add("stop", "If `ratio' less than `stop' then start leaning rate decay", &bad_ratio);
   opts.Add("lr-decay-factor", "Learning rate decay factor", &lr_decay_factor);
   opts.Add("context_size", "The size of the context vector.", &context_size);
-  opts.Add("dict_filepath", "The dict file path", &dict_filepath);
-  opts.Add("beta_filepath", "The beta file path", &beta_filepath);
   opts.Add("reject-threshold", "If (whats more) `ratio' less than `reject-threshold' then purge the epoch", &awful_ratio);
   opts.Add("retry", "Stop training once `ratio' has hit `stop' at least `retry' times", &max_bad_epochs);
   opts.Echo();
@@ -908,19 +1015,12 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Constructed a vocabulary: %d words\n", vocab.size());
   }
 
-  // constuct context
-  // TODO:Add context_choice to model Save and Restore()
-  ContextConfig context_cfg = {context_size, vocab.size(), context_choice,
-                               dict_filepath, beta_filepath};
-  Context *context = new Context(context_cfg);
-
   // Construct/load neural network
   const std::string model_weight_file = model_vocab_file + ".nnet";
   NNet* main_nnet = NULL;
   if (has_vocab && Exists(model_weight_file)) {
     fprintf(stderr, "Restoring existing nnet\n");
-    main_nnet = new NNet(vocab, context,  model_weight_file, use_cuda, use_cuda_memory_efficient);
-    //main_nnet = new NNet(vocab, model_weight_file, use_cuda, use_cuda_memory_efficient);
+    main_nnet = new NNet(vocab, model_weight_file, use_cuda, use_cuda_memory_efficient);
   } else {
     fprintf(stderr, "Constructing a new net (no model file is found)\n");
     if (maxent_hash_size) {
@@ -933,8 +1033,7 @@ int main(int argc, char **argv) {
       layer_size, layer_count, maxent_hash_size, maxent_order,
       (nce_samples > 0), static_cast<Real>(nce_lnz), reverse_sentence,
       hs_arity, layer_type, context_size};
-    //main_nnet = new NNet(vocab, context, cfg, use_cuda, use_cuda_memory_efficientm);
-		main_nnet = new NNet(vocab, context, cfg, use_cuda, use_cuda_memory_efficient);
+    main_nnet = new NNet(vocab, cfg, use_cuda, use_cuda_memory_efficient);
     if (diagonal_initialization > 0) {
       main_nnet->ApplyDiagonalInitialization(diagonal_initialization);
     }

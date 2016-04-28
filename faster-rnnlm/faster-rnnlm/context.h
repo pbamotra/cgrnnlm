@@ -4,7 +4,6 @@
 #include <stdio.h>
 
 #include <string>
-#include <map>
 
 #include "faster-rnnlm/hierarchical_softmax.h"
 #include "faster-rnnlm/maxent.h"
@@ -12,39 +11,58 @@
 #include "faster-rnnlm/util.h"
 
 typedef std::map<std::string, unsigned long> WordToLDAIndex;
-// class NNet;
-struct ContextConfig {
-  int context_size;
-  int vocab_size;
-  int choice;
-  std::string dict_filepath;
-  std::string beta_filepath;
+class Context {
+    Context(int choice, std::string dict_filepath, string beta_filepath, int num_topics) {
+
+    }
+		~Context();
+
+		void ComputeContext(NNet* nnet, const WordIndex *sen, RowMatrix *context_matrix);
+
+    WordToLDAIndex* word_to_lda_index;
+    RowMatrix* beta_matrix;
+    int choice;
 };
 
-class Context {
-public:
-  Context(const ContextConfig &cfg);
-  ~Context();
+struct NNet {
+  NNet(const Vocabulary& vocab, const NNetConfig& cfg, bool use_cuda,
+       bool use_cuda_memory_efficient);
+  NNet(const Vocabulary& vocab, const std::string& model_file, bool use_cuda,
+       bool use_cuda_memory_efficient);
+  ~NNet();
 
-  void ComputeContextMatrixAll(Vocabulary vocab, const WordIndex *sen,
-                               const int seq_length);
-  void ComputeContextMatrixWithPrev(Vocabulary vocab, const WordIndex *sen,
-                                    const int seq_length, int prev);
-  void ComputeContextMatrix(Vocabulary vocab, const WordIndex *sen,
-                            const int seq_length);
-  void ComputeContextMatrix(Vocabulary vocab, const WordIndex *sen,
-                            RowMatrix *temp_context_matrix);
-  RowVector get_beta_by_word(std::string word);
+  void ApplyDiagonalInitialization(Real);
 
-  WordToLDAIndex word_to_lda_index;
-  RowMatrix *beta_matrix;
-  RowMatrix *context_matrix;
-  const ContextConfig cfg;
+  void Save(const std::string& model_file) const;
 
-private:
+  int VocabPortionOfLayerSize() const;
+
+  // Reload weights from the file
+  //
+  // The config of the model in the file is expected to be identical to cfg
+  // It is up to user to guarantee this
+  void ReLoad(const std::string& model_file);
+
+  const NNetConfig cfg;
+  const Vocabulary& vocab;
+
+  // embedding weigts
+  RowMatrix embeddings;
+  // recurrent weights
+  IRecLayer* rec_layer;
+
+  HSTree* softmax_layer;
+
+  NCE* nce;
+
+  MaxEnt maxent_layer;
+
+  const bool use_cuda;
+  const bool use_cuda_memory_efficient;
+
+ private:
   void Init();
-  void ReadLDAVocab();
-  void ReadBetaMatrix();
+  void SaveCompatible(const std::string& model_file) const;
 };
 
 #endif  // FASTER_RNNLM_CONTEXT_H_
