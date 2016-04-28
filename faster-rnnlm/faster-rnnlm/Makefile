@@ -29,7 +29,7 @@ else
 endif
 
 LAYER_OBJ_FILES = layers/simple_layer.o layers/gru_layer.o layers/scrn_layer.o layers/layer_stack.o layers/interface.o
-OBJ_FILES = hierarchical_softmax.o nce.o words.o maxent.o nnet.o context.o $(LAYER_OBJ_FILES)
+OBJ_FILES = hierarchical_softmax.o nce.o words.o maxent.o nnet.o $(LAYER_OBJ_FILES)
 ifeq ($(NVCC_TEST), nvcc)
 	OBJ_FILES += cuda_softmax.o
 endif
@@ -45,7 +45,7 @@ hierarchical_softmax.o : hierarchical_softmax.cc hierarchical_softmax.h maxent.h
 words.o : words.cc words.h settings.h
 	$(CC) $< -c -o $@ $(CFLAGS)
 
-rnnlm.o : rnnlm.cc maxent.h nnet.h nce.h settings.h hierarchical_softmax.h words.h layers/interface.h util.h program_options.h context.h
+rnnlm.o : rnnlm.cc maxent.h nnet.h nce.h settings.h hierarchical_softmax.h words.h layers/interface.h util.h program_options.h
 	$(CC) $< -c -o $@ $(CFLAGS)
 
 nce.o : nce.cc nce.h cuda_softmax.h maxent.h layers/interface.h settings.h words.h util.h
@@ -54,10 +54,7 @@ nce.o : nce.cc nce.h cuda_softmax.h maxent.h layers/interface.h settings.h words
 maxent.o : maxent.cc maxent.h util.h settings.h
 	$(CC) $< -c -o $@ $(CFLAGS)
 
-nnet.o : nnet.cc nnet.h maxent.h settings.h hierarchical_softmax.h words.h layers/interface.h util.h context.h
-	$(CC) $< -c -o $@ $(CFLAGS)
-
-context.o : context.cc context.h maxent.h settings.h hierarchical_softmax.h words.h layers/interface.h util.h
+nnet.o : nnet.cc nnet.h maxent.h settings.h hierarchical_softmax.h words.h layers/interface.h util.h
 	$(CC) $< -c -o $@ $(CFLAGS)
 
 cuda_softmax.o : cuda_softmax.cu cuda_softmax.h settings.h
