@@ -878,7 +878,7 @@ int main(int argc, char **argv) {
   opts.Add("hidden_type", "Hidden layer activation (sigmoid, tanh, relu, gru, gru-bias, gru-insyn, gru-full)", &layer_type);
   opts.Add("arity", "Arity of the HS tree", &hs_arity);
   opts.Add("direct", "Size of maxent layer in millions", &maxent_hash_size);
-  opts.Add("direct-order", "Maximum order of ngram features", &maxent_order);
+  opts.Add("direct_order", "Maximum order of ngram features", &maxent_order);
   opts.Add("test", "Test file; if not empty, evaluation mode is enabled, i.e. no training", &test_file);
   opts.Add("train_and_test", "Set to >0 int to do both training and testing. Specify test file with -test.", &train_and_test);
   opts.Add("epoch-per-file", "Treat one pass over the train file as given number of epochs (usefull for big datasets)", &n_inner_epochs);
