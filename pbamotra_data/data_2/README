@@ -1,0 +1,4 @@
+dictionary:		|V| : 7811
+lda_betas:		|K|, |V| : (10, 7811)
+pos_term_mat:	|T|, |V| : (40, 7811)
+idf_mat:		|V| , 2	: (7811, 2)
