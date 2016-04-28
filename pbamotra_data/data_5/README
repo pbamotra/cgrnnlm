@@ -1,3 +1,5 @@
+# 10 topics only stopword removal 
+
 dictionary:		|V| : 22432
 lda_betas:		|K|, |V| : (10, 22432)
 pos_term_mat:	|T|, |V| : (40, 22432)
