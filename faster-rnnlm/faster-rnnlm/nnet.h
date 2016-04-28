@@ -13,7 +13,7 @@
 class NCE;
 class Vocabulary;
 class IRecLayer;
-
+class Context;
 
 struct NNetConfig {
   int64_t layer_size;
@@ -33,9 +33,13 @@ struct NNetConfig {
 
 
 struct NNet {
-  NNet(const Vocabulary& vocab, const NNetConfig& cfg, bool use_cuda,
+  //NNet(const Vocabulary& vocab, const NNetConfig& cfg, bool use_cuda,
+       //bool use_cuda_memory_efficient);
+	NNet(const Vocabulary& vocab, Context* context, const NNetConfig& cfg, bool use_cuda,
        bool use_cuda_memory_efficient);
-  NNet(const Vocabulary& vocab, const std::string& model_file, bool use_cuda,
+  NNet(const Vocabulary& vocab, Context* context , const std::string& model_file, bool use_cuda,
+       bool use_cuda_memory_efficient);
+  NNet(const Vocabulary& vocab,  const std::string& model_file, bool use_cuda,
        bool use_cuda_memory_efficient);
   ~NNet();
 
@@ -50,9 +54,11 @@ struct NNet {
   // The config of the model in the file is expected to be identical to cfg
   // It is up to user to guarantee this
   void ReLoad(const std::string& model_file);
+	void ComputeContextMatrix(const WordIndex *sen, const int seq_length);
 
   const NNetConfig cfg;
   const Vocabulary& vocab;
+	
 
   // embedding weigts
   RowMatrix embeddings;
@@ -62,6 +68,8 @@ struct NNet {
   HSTree* softmax_layer;
 
   NCE* nce;
+
+	Context* context;
 
   MaxEnt maxent_layer;
 

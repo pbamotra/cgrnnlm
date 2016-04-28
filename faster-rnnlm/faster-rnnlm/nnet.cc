@@ -6,6 +6,7 @@
 #include "faster-rnnlm/layers/interface.h"
 #include "faster-rnnlm/nce.h"
 #include "faster-rnnlm/util.h"
+#include "faster-rnnlm/context.h"
 #include "faster-rnnlm/words.h"
 
 namespace {
@@ -75,19 +76,29 @@ static NNetConfig ReadConfig(const std::string& model_file) {
   return cfg;
 }
 
-
-NNet::NNet(const Vocabulary& vocab, const NNetConfig& cfg, bool use_cuda,
-           bool use_cuda_memory_efficient)
-    : cfg(cfg)
-    , vocab(vocab)
-    , rec_layer(NULL)
-    , nce(NULL)
-    , use_cuda(use_cuda)
-    , use_cuda_memory_efficient(use_cuda_memory_efficient)
+NNet::NNet(const Vocabulary& vocab, Context* context, const NNetConfig& cfg, bool use_cuda,
+					 bool use_cuda_memory_efficient)
+		: vocab(vocab)
+		, context(context)
+		, cfg(cfg)
+		, rec_layer(NULL)
+		, nce(NULL)
+		, use_cuda(use_cuda)
+		, use_cuda_memory_efficient(use_cuda_memory_efficient)
 {
-  Init();
+	Init();
 }
-
+//NNet::NNet(const Vocabulary& vocab, const NNetConfig& cfg, bool use_cuda,
+           //bool use_cuda_memory_efficient)
+    //: cfg(cfg)
+    //, vocab(vocab)
+    //, rec_layer(NULL)
+    //, nce(NULL)
+    //, use_cuda(use_cuda)
+    //, use_cuda_memory_efficient(use_cuda_memory_efficient)
+//{
+  //Init();
+//}
 
 NNet::NNet(const Vocabulary& vocab, const std::string& model_file, bool use_cuda,
            bool use_cuda_memory_efficient)
@@ -95,6 +106,20 @@ NNet::NNet(const Vocabulary& vocab, const std::string& model_file, bool use_cuda
     , vocab(vocab)
     , rec_layer(NULL)
     , nce(NULL)
+		, context(NULL)
+    , use_cuda(use_cuda)
+    , use_cuda_memory_efficient(use_cuda_memory_efficient)
+{
+  Init();
+  ReLoad(model_file);
+}
+NNet::NNet(const Vocabulary& vocab, Context* context, const std::string& model_file, bool use_cuda,
+           bool use_cuda_memory_efficient)
+    : cfg(ReadConfig(model_file))
+    , vocab(vocab)
+    , rec_layer(NULL)
+    , nce(NULL)
+		, context(context)
     , use_cuda(use_cuda)
     , use_cuda_memory_efficient(use_cuda_memory_efficient)
 {
@@ -243,4 +268,8 @@ void NNet::ReLoad(const std::string& model_file) {
   rec_layer->GetWeights()->Load(file);
   maxent_layer.Load(file);
   fclose(file);
+}
+
+void NNet::ComputeContextMatrix(const WordIndex *sen, const int seq_length) {
+		context->ComputeContextMatrixAll(vocab, sen, seq_length);
 }
