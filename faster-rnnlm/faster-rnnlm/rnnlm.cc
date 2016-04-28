@@ -908,9 +908,11 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Constructed a vocabulary: %d words\n", vocab.size());
   }
 
-	// constuct context
-	ContextConfig context_cfg = { context_size, vocab.size(), context_choice, dict_filepath, beta_filepath};
-	Context* context = new Context(context_cfg);
+  // constuct context
+  // TODO:Add context_choice to model Save and Restore()
+  ContextConfig context_cfg = {context_size, vocab.size(), context_choice,
+                               dict_filepath, beta_filepath};
+  Context *context = new Context(context_cfg);
 
   // Construct/load neural network
   const std::string model_weight_file = model_vocab_file + ".nnet";
