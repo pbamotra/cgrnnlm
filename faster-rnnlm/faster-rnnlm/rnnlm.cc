@@ -228,8 +228,8 @@ void ComputeContextMatrix(NNet* nnet, const WordIndex *sen, RowMatrix *context_m
   }
   context_matrix->setZero();
   // We add the topic of the next word as context for our current word.
-  for (int i = 0; i < context_matrix->rows() - 1; ++i) {
-    std::string curr_word(nnet->vocab.GetWordByIndex(sen[i + 1]));
+  for (int i = 0; i < context_matrix->rows(); ++i) {
+    std::string curr_word(nnet->vocab.GetWordByIndex(sen[i]));
     context_matrix->row(i) = get_beta_by_word(curr_word).row(0);
   }
 }
