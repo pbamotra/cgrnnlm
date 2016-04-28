@@ -1,0 +1,6 @@
+# 20 topics - no stopword removal
+
+dictionary:		|V| : 22641
+lda_betas:		|K|, |V| : (20, 22641)
+pos_term_mat:	|T|, |V| : (45, 22641)
+idf_mat:		|V| , 2	: (22641, 2)
