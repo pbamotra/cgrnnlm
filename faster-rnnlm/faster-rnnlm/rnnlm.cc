@@ -98,6 +98,8 @@ struct TrainThreadTask {
   INoiseGenerator* noise_generator;
   int64_t* n_done_words;
   int64_t* n_done_bytes;
+	bool l1_loss;
+	bool normalize;
 };
 
 
@@ -221,7 +223,7 @@ void print_row_vector(RowVector vec) {
 // TODO: Fix ordering of ContextMatrix. If it is of sen_length: c1...c_k, we use
 // c_2, ... c_k as predictions for input contexts. So we don't know what to
 // predict for last word.
-void ComputeContextMatrix(NNet* nnet, const WordIndex *sen, RowMatrix *context_matrix) {
+void ComputeContextMatrix(NNet* nnet, const WordIndex *sen, RowMatrix *context_matrix, bool normalize) {
   if (context_matrix == NULL) {
     fprintf(stderr, "Provided a null context matrix. What did you expect?\n");
     return;
@@ -231,6 +233,11 @@ void ComputeContextMatrix(NNet* nnet, const WordIndex *sen, RowMatrix *context_m
   for (int i = 0; i < context_matrix->rows(); ++i) {
     std::string curr_word(nnet->vocab.GetWordByIndex(sen[i]));
     context_matrix->row(i) = get_beta_by_word(curr_word).row(0);
+		//print_row_vector(context_matrix->row(i));
+		if (normalize) {
+				if (context_matrix->row(i).sum() !=0 )
+						context_matrix->row(i) /= context_matrix->row(i).sum();
+		}
   }
 }
 
@@ -268,7 +275,7 @@ bool Exists(const std::string& fname) {
 // Returns entropy of the model in bits
 //
 // if print_logprobs is true, -log10(Prob(sentence)) is printed for each sentence in the file
-Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bool accurate_nce) {
+Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bool accurate_nce, bool normalize) {
   IRecUpdater* rec_layer_updater = nnet->rec_layer->CreateUpdater();
   bool kAutoInsertUnk = (kOOVPolicy == kConvertToUnk);
   SentenceReader reader(nnet->vocab, filename, nnet->cfg.reverse_sentence, kAutoInsertUnk);
@@ -292,7 +299,7 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
     const int vocab_portion = nnet->VocabPortionOfLayerSize();
 
     RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
-    ComputeContextMatrix(nnet, sen, &context_matrix);
+    ComputeContextMatrix(nnet, sen, &context_matrix, normalize);
     PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
 
     // TODO: Change this as well to use correct split for Context/Vocab.
@@ -342,12 +349,18 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
   return entropy;
 }
 
+int getSign (double e) {
+		if (e==0) 
+				return 0;
+		else
+				return (e>0) ? 1 : -1;
+}
 // Returns the L2 loss and sets the gradient in context_grad.
 // output_block: 1 x |C| matrix.
 // true_context: 1 x |C| matrix.
 // context_grad: 1 x |C| matrix
 double ComputeContextLoss(const RowMatrix &output_block,
-                     const RowMatrix &true_context, RowVector *context_grad, int norm) {
+                     const RowMatrix &true_context, RowVector *context_grad, bool l1_loss) {
 
   assert(context_grad && output_block.rows() == 1 && true_context.rows() == 1);
   assert(output_block.cols() == true_context.cols());
@@ -359,13 +372,13 @@ double ComputeContextLoss(const RowMatrix &output_block,
   double context_loss = 0;
   for (int i = 0; i < context_size; ++i) {
     double e =  output_block(0, i) - true_context(0, i) ;
-    (*context_grad)(i) = (norm==1) ? 1 : e/context_size;
+    (*context_grad)(i) = (l1_loss) ? getSign(e) : e/context_size;
 		if (_DEBUG_MODE_judy) {
       fprintf(stderr, "Loss gradient ---- i: %d, %f \n", i,(*context_grad)(i));
     }
-    context_loss += (norm==1) ? fabs(e) :e * e;
+    context_loss += (l1_loss) ? fabs(e) :e * e;
   }
-  return (norm==1) ? (context_loss/context_size)  : (context_loss/( 2 * context_size ));
+  return (l1_loss) ? (context_loss/context_size)  : (context_loss/( 2 * context_size ));
 }
 
 void *RunThread(void *ptr) {
@@ -443,7 +456,7 @@ void *RunThread(void *ptr) {
     const WordIndex* sen = reader.sentence();
     const int seq_length = reader.sentence_length();
     RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
-    ComputeContextMatrix(nnet, sen, &context_matrix);
+    ComputeContextMatrix(nnet, sen, &context_matrix, task.normalize);
 
     // Compute hidden layer for all words
     PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
@@ -482,19 +495,19 @@ void *RunThread(void *ptr) {
 			double context_loss=0;
 			
 			// Test Norm-1 or Norm-2?
-			int norm=1;
+		
       if (target < seq_length) {
         context_loss = ComputeContextLoss(
             context_outputs,
             context_matrix.row(target), // predicted should be t (from t-1).
-            &loss_context_grad,norm);
+            &loss_context_grad,task.l1_loss);
       } else {
           // Now we're at the end of the sentence. Target word should be </s> (mapped to zero).
           // So Target context should also be its equivalent. We map it to 0.
         context_loss = ComputeContextLoss(
             context_outputs,
             zero_context, // predicted should be t (from t-1).
-            &loss_context_grad,norm);
+            &loss_context_grad,task.l1_loss);
       }
 			if (_DEBUG_MODE_judy) {
 					fprintf(stderr, " Context loss : %f \n", context_loss); 
@@ -570,7 +583,7 @@ void TrainLM(
     const std::string& model_weight_file,
     const std::string& train_file, const std::string& valid_file,
     bool show_progress, bool show_train_entropy, int n_threads, int n_inner_epochs,
-    NNet* nnet) {
+    NNet* nnet, bool l1_loss, bool normalize) {
   NNet* noise_net = NULL;
   INoiseGenerator* noise_generator = NULL;
   if (nnet->cfg.use_nce) {
@@ -586,7 +599,7 @@ void TrainLM(
       {
         const bool kPrintLogprobs = false;
         const bool kNCEAccurate = true;
-        Real test_enropy = EvaluateLM(noise_net, valid_file, kPrintLogprobs, kNCEAccurate);
+        Real test_enropy = EvaluateLM(noise_net, valid_file, kPrintLogprobs, kNCEAccurate,normalize);
         fprintf(stderr, "Noise Model Valid entropy %f\n", test_enropy);
       }
 
@@ -613,7 +626,7 @@ void TrainLM(
   {
     const bool kPrintLogprobs = false;
     const bool kNCEAccurate = true;
-    bl_entropy = EvaluateLM(nnet, valid_file, kPrintLogprobs, kNCEAccurate);
+    bl_entropy = EvaluateLM(nnet, valid_file, kPrintLogprobs, kNCEAccurate,normalize);
     fprintf(stderr, "Initial entropy (bits) valid: %8.5f\n", bl_entropy);
   }
 
@@ -652,6 +665,8 @@ void TrainLM(
 
       tasks[i].context_loss_weight = context_loss_weight;
       tasks[i].word_loss_weight = word_loss_weight;
+			tasks[i].l1_loss = l1_loss;
+			tasks[i].normalize = normalize;
     }
     for (int i = 0; i < n_threads; i++) {
 #ifdef NOTHREAD
@@ -667,7 +682,7 @@ void TrainLM(
 
     const bool kPrintLogprobs = false;
     const bool kNCEAccurate = true;
-    const Real entropy = EvaluateLM(nnet, valid_file, kPrintLogprobs, kNCEAccurate);
+    const Real entropy = EvaluateLM(nnet, valid_file, kPrintLogprobs, kNCEAccurate,normalize);
     if (!show_progress) {
       fprintf(stderr, "Epoch %d ", epoch);
     }
@@ -718,7 +733,7 @@ void TrainLM(
 }
 
 
-void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature) {
+void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature, bool normalize) {
   std::vector<WordIndex> wids;
   {
     char buffer[MAX_STRING];
@@ -752,7 +767,7 @@ void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature
   IRecUpdater* updater = nnet->rec_layer->CreateUpdater();
 
   RowMatrix context_matrix(wids.size(), nnet->cfg.context_size);
-  ComputeContextMatrix(nnet, wids.data(), &context_matrix);
+  ComputeContextMatrix(nnet, wids.data(), &context_matrix, normalize);
   PropagateForward(nnet, wids.data(), wids.size(), context_matrix, updater);
   for (int sample_idx = 0; sample_idx < n_samples; ++sample_idx) {
     for (size_t i = 0; i < wids.size(); ++i) {
@@ -861,7 +876,8 @@ int main(int argc, char **argv) {
   int bptt_skip = bptt_period - bptt;
 
   int train_and_test = 0;
-
+	bool l1_loss=false;
+	bool normalize=false;
   // If we use LDA, context size is num_topics.
   int context_size = 10;
 
@@ -899,6 +915,8 @@ int main(int argc, char **argv) {
   opts.Add("alpha", "Learning rate for recurrent and embedding weights", &initial_lrate);
   opts.Add("word_loss_weight", "Loss weight from word prediction loss.", &word_loss_weight);
   opts.Add("context_loss_weight", "Loss weight from context prediction loss.", &context_loss_weight);
+  opts.Add("l1_loss", "Flag for l1 loss", &l1_loss);
+  opts.Add("normalize", "Flag for normalizing ContextMatrix", &normalize);
   opts.Add("maxent-alpha", "Learning rate for maxent layer", &initial_maxent_lrate);
   opts.Add("beta", "Weight decay for recurrent and embedding weight, i.e. L2-regularization", &l2reg);
   opts.Add("maxent-beta", "Weight decay for maxent layer, i.e. L2-regularization", &maxent_l2reg);
@@ -1026,9 +1044,9 @@ int main(int argc, char **argv) {
 
     fprintf(stderr, "here");
     TrainLM(model_weight_file, train_file, valid_file, show_progress,
-            show_train_entropy, n_threads, n_inner_epochs, main_nnet);
+            show_train_entropy, n_threads, n_inner_epochs, main_nnet,l1_loss,normalize);
     Real test_entropy =
-          EvaluateLM(main_nnet, test_file, false, nce_accurate_test);
+          EvaluateLM(main_nnet, test_file, false, nce_accurate_test,normalize);
       if (!main_nnet->cfg.use_nce || nce_accurate_test) {
         fprintf(stderr, "Test entropy %f\n", test_entropy);
       } else {
@@ -1038,12 +1056,12 @@ int main(int argc, char **argv) {
 
   else {
     if (n_samples > 0) {
-      SampleFromLM(main_nnet, random_seed, n_samples, generate_temperature);
+      SampleFromLM(main_nnet, random_seed, n_samples, generate_temperature, normalize);
     } else if (!test_file.empty()) {
       // Apply mode
       const bool kPrintLogprobs = false;
       Real test_enropy =
-          EvaluateLM(main_nnet, test_file, kPrintLogprobs, nce_accurate_test);
+          EvaluateLM(main_nnet, test_file, kPrintLogprobs, nce_accurate_test,normalize);
       if (!main_nnet->cfg.use_nce || nce_accurate_test) {
         fprintf(stderr, "Test entropy %f\n", test_enropy);
       } else {
@@ -1052,7 +1070,7 @@ int main(int argc, char **argv) {
     } else {
       // Train mode
       TrainLM(model_weight_file, train_file, valid_file, show_progress,
-              show_train_entropy, n_threads, n_inner_epochs, main_nnet);
+              show_train_entropy, n_threads, n_inner_epochs, main_nnet,l1_loss,normalize);
     }
   }
 
