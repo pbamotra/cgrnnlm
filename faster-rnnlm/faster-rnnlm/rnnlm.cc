@@ -75,8 +75,8 @@ double nce_unigram_min_cells = 5;
 std::map< std::string, unsigned long> word_idx_dictionary;
 std::map< unsigned long, std::string> idx_word_dictionary;
 std::vector< std::vector<double> > betas;
-std::string beta_filepath = "lda_betas.csv";
-std::string dict_filepath = "dictionary.ssv";
+std::string beta_filepath = "../../pbamotra_data/data_3/lda_betas.csv";
+std::string dict_filepath = "../../pbamotra_data/data_3/dictionary.ssv";
 
 struct SimpleTimer;
 
@@ -173,7 +173,7 @@ int read_beta_matrix() {
     std::vector< double>       curr_row;
     while (std::getline(lineStream, cell, ','))
     {
-      curr_row.push_back(std::stod(cell));
+      curr_row.push_back(atof(cell.c_str()));
     }
     betas.push_back(curr_row);
   }
@@ -227,36 +227,11 @@ void ComputeContextMatrix(NNet* nnet, const WordIndex *sen, RowMatrix *context_m
     return;
   }
   context_matrix->setZero();
-  unsigned int sent_length = context_matrix->rows();
-  unsigned int i=1;
-  for (;i<sent_length; i++) {
+  for (int i = 0; i < context_matrix->rows(); ++i) {
     std::string curr_word(nnet->vocab.GetWordByIndex(sen[i]));
-    context_matrix->row(i-1) = get_beta_by_word(curr_word).row(0);
-  }
-  context_matrix->row(i-1).setZero();
-}
-
-void ComputeContextMatrixWithPrev(NNet* nnet, const WordIndex *sen, RowMatrix *context_matrix, int prev=2) {
-  if (context_matrix == NULL) {
-    fprintf(stderr, "Provided a null context matrix. What did you expect?\n");
-    return;
-  }
-  context_matrix->setZero();
-  int sent_length = context_matrix->rows();
-  int i=1;
-
-  RowMatrix temp_context_matrix(sent_length, context_matrix->cols());
-  ComputeContextMatrix(nnet, sen, &temp_context_matrix);
-
-  for (; i<=sent_length; i++) {
-        std::string curr_word(nnet->vocab.GetWordByIndex(sen[i]));
-        context_matrix->row(i - 1) = get_beta_by_word(curr_word).row(0);
-        for (int j=i-2; (j >= 0) && (j >= (i - 1 - prev)); j--) {
-          context_matrix->row(i - 1) += temp_context_matrix.row(j);
-        }
+    context_matrix->row(i) = get_beta_by_word(curr_word).row(0);
   }
 }
-
 
 inline void PropagateForward(NNet* nnet, const WordIndex* sen, int sen_length, const RowMatrix& context_matrix, IRecUpdater* layer) {
   // Dimensions:
