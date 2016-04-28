@@ -235,7 +235,7 @@ void ComputeContextMatrix(NNet* nnet, const WordIndex *sen, RowMatrix *context_m
     context_matrix->row(i) = get_beta_by_word(curr_word).row(0);
 		//print_row_vector(context_matrix->row(i));
 		if (normalize) {
-				if (context_matrix->row(i).sum() !=0 )
+				if (fabs(context_matrix->row(i).sum()) > 1e-5)
 						context_matrix->row(i) /= context_matrix->row(i).sum();
 		}
   }
