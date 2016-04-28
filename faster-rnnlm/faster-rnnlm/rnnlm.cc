@@ -350,7 +350,7 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
 }
 
 int getSign (double e) {
-		if (e==0) 
+		if (fabs(e) < 1e-5) 
 				return 0;
 		else
 				return (e>0) ? 1 : -1;
