@@ -75,8 +75,8 @@ double nce_unigram_min_cells = 5;
 std::map< std::string, unsigned long> word_idx_dictionary;
 std::map< unsigned long, std::string> idx_word_dictionary;
 std::vector< std::vector<double> > betas;
-std::string beta_filepath = "../../pbamotra_data/data_3/lda_betas.csv";
-std::string dict_filepath = "../../pbamotra_data/data_3/dictionary.ssv";
+//std::string beta_filepath = "../../pbamotra_data/data_3/lda_betas.csv";
+//std::string dict_filepath = "../../pbamotra_data/data_3/dictionary.ssv";
 
 struct SimpleTimer;
 
@@ -143,8 +143,8 @@ inline int CalculateMaxentHashIndices(
   return maxent_present;
 }
 
-int read_lda_vocab(char **argv) {
-  std::fstream fin(dict_filepath.c_str());
+int read_lda_vocab(std::string dict_filepath) {
+	std::fstream fin(dict_filepath.c_str());
 
   if (!fin) {
     fprintf(stderr, "Error, could not open file.");
@@ -163,7 +163,7 @@ int read_lda_vocab(char **argv) {
   return 0;
 }
 
-int read_beta_matrix() {
+void read_beta_matrix(std::string beta_filepath) {
   std::ifstream indata;
   indata.open(beta_filepath.c_str());
   std::string line;
@@ -180,7 +180,6 @@ int read_beta_matrix() {
     betas.push_back(curr_row);
   }
   fprintf(stdout, "Size of beta matrix is %lux%lu\n", betas.size(), betas[0].size());
-  return 0;
 }
 
 RowVector get_beta_by_word(std::string word) {
@@ -874,13 +873,11 @@ int main(int argc, char **argv) {
 #ifdef DETECT_FPE
   feenableexcept(FE_ALL_EXCEPT & ~FE_INEXACT & ~FE_UNDERFLOW);
 #endif
-  read_lda_vocab(argv);
-  read_beta_matrix();
   std::string layer_type = "sigmoid";
   int layer_size = 100, maxent_order = 0, random_seed = 0, hs_arity = 2;
   uint64_t maxent_hash_size = 0;
   int layer_count = 1;
-  std::string model_vocab_file, test_file, train_file, valid_file;
+  std::string model_vocab_file, test_file, train_file, valid_file, beta_filepath, dict_filepath;
   bool use_cuda = kHaveCudaSupport;
   bool use_cuda_memory_efficient = false;
   bool reverse_sentence = false;
@@ -899,9 +896,12 @@ int main(int argc, char **argv) {
   // If we use LDA, context size is num_topics.
   int context_size = 10;
 
+
   SimpleOptionParser opts;
   opts.Echo("Fast Recurrent Neural Network Language Model");
   opts.Echo("Main options:");
+	opts.Add("beta_filepath", "Path to beta file", &beta_filepath);
+	opts.Add("dict_filepath", "Path to dict file", &dict_filepath);
   opts.Add("rnnlm", "Path to model file (mandatory)", &model_vocab_file);
   opts.Add("train", "Train file", &train_file);
   opts.Add("valid", "Validation file (used for early stopping)", &valid_file);
@@ -1014,6 +1014,8 @@ int main(int argc, char **argv) {
 
   srand(random_seed);
 
+  read_lda_vocab(dict_filepath);
+  read_beta_matrix(beta_filepath);
   // Construct/load vocabulary
   Vocabulary vocab;
   const bool has_vocab = Exists(model_vocab_file);
