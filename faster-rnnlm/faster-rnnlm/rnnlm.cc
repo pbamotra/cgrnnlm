@@ -372,13 +372,15 @@ double ComputeContextLoss(const RowMatrix &output_block,
   double context_loss = 0;
   for (int i = 0; i < context_size; ++i) {
     double e =  output_block(0, i) - true_context(0, i) ;
-    (*context_grad)(i) = (l1_loss) ? getSign(e) : e/context_size;
-		if (_DEBUG_MODE_judy) {
-      fprintf(stderr, "Loss gradient ---- i: %d, %f \n", i,(*context_grad)(i));
-    }
+    (*context_grad)(i) = (l1_loss) ? getSign(e) : e;
+    //(*context_grad)(i) = (l1_loss) ? getSign(e) : e/context_size;
+		//if (_DEBUG_MODE_judy) {
+      //fprintf(stderr, "Loss gradient ---- i: %d, %f \n", i,(*context_grad)(i));
+    //}
     context_loss += (l1_loss) ? fabs(e) :e * e;
   }
-  return (l1_loss) ? (context_loss/context_size)  : (context_loss/( 2 * context_size ));
+	return context_loss;
+  //return (l1_loss) ? (context_loss/context_size)  : (context_loss/( 2 * context_size ));
 }
 
 void *RunThread(void *ptr) {
@@ -417,6 +419,7 @@ void *RunThread(void *ptr) {
   RowVector zero_context(nnet->cfg.context_size);
   zero_context.setZero();
 
+	double taskContextLoss=0;
 
   while (reader.Read()) {
     n_done_words_local += reader.sentence_length();
@@ -473,7 +476,6 @@ void *RunThread(void *ptr) {
               output_grad.rows(), output_grad.cols(), seq_length);
     }
 
-
     for (int target = 1; target <= seq_length; ++target) {
       //const Real* output_row = output.row(target - 1).data();
       //Real* output_grad_row = output_grad.row(target - 1).data();
@@ -509,10 +511,16 @@ void *RunThread(void *ptr) {
             zero_context, // predicted should be t (from t-1).
             &loss_context_grad,task.l1_loss);
       }
-			if (_DEBUG_MODE_judy) {
-					fprintf(stderr, " Context loss : %f \n", context_loss); 
-			}
 
+			loss_context_grad /= seq_length;
+			context_loss /= (task.l1_loss) ? seq_length : (2*seq_length);
+			if (_DEBUG_MODE_judy) {
+					fprintf(stdout,"context grad\n");
+					print_row_vector(loss_context_grad);
+
+					//fprintf(stderr, " Context loss : %f \n", context_loss); 
+			}
+			taskContextLoss+=context_loss;
       // We set the gradient to loss from context diffs. We later add the loss
       // from softmax/nce for the vocab portion.
       output_grad.block(target - 1, vocab_portion, 1, nnet->cfg.context_size) =
@@ -545,7 +553,14 @@ void *RunThread(void *ptr) {
             gradient_clipping, loss_word_grad, &nnet->maxent_layer);
       }
       output_grad.block(target - 1, 0, 1, vocab_portion) = task.word_loss_weight * loss_word_grad;
-    }
+ 			if (_DEBUG_MODE_judy) {
+					fprintf(stdout,"vocab grad\n");
+					print_row_vector(loss_word_grad);
+
+					//fprintf(stderr, " Context loss : %f \n", context_loss); 
+			}   
+		}
+
 
     rec_layer_updater->BackwardSequence(seq_length, GetNextRandom(&next_random), bptt_period, bptt);
 
@@ -568,6 +583,9 @@ void *RunThread(void *ptr) {
         break;
     }
   }
+		//if (_DEBUG_MODE_judy) {
+				//fprintf(stderr,"task ContextLoss %f--------\n", taskContextLoss);
+		//}
 
   delete rec_layer_updater;
   delete nce_updater;
