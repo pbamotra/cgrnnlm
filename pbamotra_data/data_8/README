@@ -1,4 +1,4 @@
-# 10 topics - word removal using FasterRNNLM dictionary
+# 20 topics - word removal using FasterRNNLM dictionary
 
 dictionary:		|V| : 9928
 lda_betas:		|K|, |V| : (20, 9928)

@@ -1,0 +1,6 @@
+# 30 topics - word removal using FasterRNNLM dictionary
+
+dictionary:		|V| : 9928
+lda_betas:		|K|, |V| : (30, 9928)
+pos_term_mat:	|T|, |V| : (42, 9928)
+idf_mat:		|V| , 2	: (9928, 2)
