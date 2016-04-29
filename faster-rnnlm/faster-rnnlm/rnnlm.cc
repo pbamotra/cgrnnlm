@@ -769,6 +769,7 @@ void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature
         }
       }
       wids.push_back(wid);
+      fprintf(stderr, "Generating, adding word to wids\n");
     }
   }
   printf("Generating with seed:");
@@ -784,6 +785,7 @@ void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature
   std::vector<double> probs(nnet->vocab.size());
   IRecUpdater* updater = nnet->rec_layer->CreateUpdater();
 
+  const int vocab_portion = nnet->VocabPortionOfLayerSize();
   RowMatrix context_matrix(wids.size(), nnet->cfg.context_size);
   ComputeContextMatrix(nnet, wids.data(), &context_matrix, normalize);
   PropagateForward(nnet, wids.data(), wids.size(), context_matrix, updater);
@@ -799,7 +801,8 @@ void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature
     for (; sen.back() != 0;) {
       sen.push_back(0);
       int target = sen.size() - 1;
-      const RowMatrix& output = updater->GetOutputMatrix();
+      const RowMatrix& full_output = updater->GetOutputMatrix();
+      const RowMatrix& output = full_output.leftCols(vocab_portion);
       RowMatrix& input = updater->GetInputMatrix();
 
       // Calculate (unnormalized) probabilities for each word to follow
@@ -1062,14 +1065,19 @@ int main(int argc, char **argv) {
 
     fprintf(stderr, "here");
     TrainLM(model_weight_file, train_file, valid_file, show_progress,
-            show_train_entropy, n_threads, n_inner_epochs, main_nnet,l1_loss,normalize);
+            show_train_entropy, n_threads, n_inner_epochs, main_nnet, l1_loss,
+            normalize);
     Real test_entropy =
-          EvaluateLM(main_nnet, test_file, false, nce_accurate_test,normalize);
-      if (!main_nnet->cfg.use_nce || nce_accurate_test) {
-        fprintf(stderr, "Test entropy %f\n", test_entropy);
-      } else {
-        fprintf(stderr, "Use -nce-accurate-test to calculate entropy\n");
-      }
+        EvaluateLM(main_nnet, test_file, false, nce_accurate_test, normalize);
+    if (!main_nnet->cfg.use_nce || nce_accurate_test) {
+      fprintf(stderr, "Test entropy %f\n", test_entropy);
+    } else {
+      fprintf(stderr, "Use -nce-accurate-test to calculate entropy\n");
+    }
+    if (n_samples > 0) {
+      SampleFromLM(main_nnet, random_seed, n_samples, generate_temperature,
+                   normalize);
+    }
   }
 
   else {
