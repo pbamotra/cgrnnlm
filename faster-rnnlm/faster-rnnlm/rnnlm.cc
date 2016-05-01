@@ -74,9 +74,9 @@ double nce_unigram_min_cells = 5;
 // Please make sure that the following files exit
 std::map< std::string, unsigned long> word_idx_dictionary;
 std::map< unsigned long, std::string> idx_word_dictionary;
-std::vector< std::vector<double> > betas;
-//std::string beta_filepath = "../../pbamotra_data/data_3/lda_betas.csv";
-//std::string dict_filepath = "../../pbamotra_data/data_3/dictionary.ssv";
+std::vector< std::vector<double> > betas, pos_matrix;
+//std::string beta_filepath = "../../pbamotra_data/data_6/lda_betas.csv";
+//std::string dict_filepath = "../../pbamotra_data/data_6/dictionary.ssv";
 
 struct SimpleTimer;
 
@@ -182,6 +182,26 @@ void read_beta_matrix(std::string beta_filepath) {
   fprintf(stdout, "Size of beta matrix is %lux%lu\n", betas.size(), betas[0].size());
 }
 
+// Repetitive code
+void read_pos_matrix(std::string pos_filepath) {
+  std::ifstream indata;
+  indata.open(pos_filepath.c_str());
+  std::string line;
+
+  while (std::getline(indata, line))
+  {
+    std::stringstream          lineStream(line);
+    std::string                cell;
+    std::vector< double>       curr_row;
+    while (std::getline(lineStream, cell, ','))
+    {
+      curr_row.push_back(atof(cell.c_str()));
+    }
+    pos_matrix.push_back(curr_row);
+  }
+  fprintf(stdout, "Size of POS matrix is %lux%lu\n", pos_matrix.size(), pos_matrix[0].size());
+}
+
 RowVector get_beta_by_word(std::string word) {
   unsigned long n_beta_rows;
   unsigned long n_beta_cols;
@@ -210,6 +230,35 @@ RowVector get_beta_by_word(std::string word) {
   }
 }
 
+// Repetitive code
+RowVector get_pos_by_word(std::string word) {
+  unsigned long n_pos_rows;
+  unsigned long n_pos_cols;
+
+  n_pos_rows = pos_matrix.size();
+  n_pos_cols = pos_matrix[0].size();
+  if (n_pos_rows > 0 && n_pos_cols > 0) {
+    bool word_in_dict = word_idx_dictionary.count(word) == 1;
+
+    RowVector result;
+    result.resize(1, n_pos_rows);
+    result.setZero();
+
+    if (word_in_dict) {
+      unsigned long index = word_idx_dictionary[word];
+      if (n_pos_cols > index) {
+        for(unsigned long row=0; row<n_pos_rows; row++) {
+          result(0, row) = pos_matrix[row][index];
+        }
+      }
+    }
+    return result;
+  } else {
+    fprintf(stderr, "POS matrix is empty");
+    std::exit(1);
+  }
+}
+
 void print_row_vector(RowVector vec) {
   for(unsigned int i=0; i<vec.size(); i++) {
     fprintf(stdout, "%f ", vec(0, i));
@@ -231,8 +280,13 @@ void ComputeContextMatrix(NNet* nnet, const WordIndex *sen, RowMatrix *context_m
   // We add the topic of the next word as context for our current word.
   for (int i = 0; i < context_matrix->rows(); ++i) {
     std::string curr_word(nnet->vocab.GetWordByIndex(sen[i]));
-    context_matrix->row(i) = get_beta_by_word(curr_word).row(0);
-		//print_row_vector(context_matrix->row(i));
+    if (pos_matrix.size() > 0) {
+       RowVector concatenated_vector(1, context_matrix->cols());
+       concatenated_vector << get_beta_by_word(curr_word).row(0), get_pos_by_word(curr_word).row(0); 
+       context_matrix->row(i) = concatenated_vector;
+    } else {
+    	context_matrix->row(i) = get_beta_by_word(curr_word).row(0);
+    }		//print_row_vector(context_matrix->row(i));
 		if (normalize) {
 				if (fabs(context_matrix->row(i).sum()) > 1e-5)
 						context_matrix->row(i) /= context_matrix->row(i).sum();
@@ -880,7 +934,7 @@ int main(int argc, char **argv) {
   int layer_size = 100, maxent_order = 0, random_seed = 0, hs_arity = 2;
   uint64_t maxent_hash_size = 0;
   int layer_count = 1;
-  std::string model_vocab_file, test_file, train_file, valid_file, beta_filepath, dict_filepath;
+  std::string model_vocab_file, test_file, train_file, valid_file, beta_filepath, pos_filepath, dict_filepath;
   bool use_cuda = kHaveCudaSupport;
   bool use_cuda_memory_efficient = false;
   bool reverse_sentence = false;
@@ -898,13 +952,15 @@ int main(int argc, char **argv) {
 	bool normalize=false;
   // If we use LDA, context size is num_topics.
   int context_size = 10;
+  int pos_context_size = 45;
 
 
   SimpleOptionParser opts;
   opts.Echo("Fast Recurrent Neural Network Language Model");
   opts.Echo("Main options:");
 	opts.Add("beta_filepath", "Path to beta file", &beta_filepath);
-	opts.Add("dict_filepath", "Path to dict file", &dict_filepath);
+	opts.Add("pos_filepath", "Path to POS file", &pos_filepath);
+  	opts.Add("dict_filepath", "Path to dict file", &dict_filepath);
   opts.Add("rnnlm", "Path to model file (mandatory)", &model_vocab_file);
   opts.Add("train", "Train file", &train_file);
   opts.Add("valid", "Validation file (used for early stopping)", &valid_file);
@@ -945,7 +1001,8 @@ int main(int argc, char **argv) {
   opts.Echo("Early stopping options (let `ratio' be a ratio of previous epoch validation entropy to new one):");
   opts.Add("stop", "If `ratio' less than `stop' then start leaning rate decay", &bad_ratio);
   opts.Add("lr-decay-factor", "Learning rate decay factor", &lr_decay_factor);
-  opts.Add("context_size", "The size of the context vector.", &context_size);
+  opts.Add("context_size", "The size of the LDA beta context vector.", &context_size);
+  opts.Add("pos_context_size", "The size of POS context vector.", &pos_context_size);
   opts.Add("reject-threshold", "If (whats more) `ratio' less than `reject-threshold' then purge the epoch", &awful_ratio);
   opts.Add("retry", "Stop training once `ratio' has hit `stop' at least `retry' times", &max_bad_epochs);
   opts.Echo();
@@ -1019,6 +1076,11 @@ int main(int argc, char **argv) {
 
   read_lda_vocab(dict_filepath);
   read_beta_matrix(beta_filepath);
+  if (!pos_filepath.empty() && pos_context_size > 0) {
+    read_pos_matrix(pos_filepath);
+  }
+ 
+
   // Construct/load vocabulary
   Vocabulary vocab;
   const bool has_vocab = Exists(model_vocab_file);
@@ -1046,6 +1108,10 @@ int main(int argc, char **argv) {
       // for back-compability
       maxent_hash_size -= maxent_hash_size % vocab.size();
     }
+    if (!pos_filepath.empty() && pos_context_size > 0) {
+       context_size += pos_context_size;
+    }
+
     NNetConfig cfg = {
       layer_size, layer_count, maxent_hash_size, maxent_order,
       (nce_samples > 0), static_cast<Real>(nce_lnz), reverse_sentence,
