@@ -1,0 +1,6 @@
+# 40 topics - using full dictionary
+
+dictionary:		|V| : 22644
+lda_betas:		|K|, |V| : (40, 22644)
+pos_term_mat:	|T|, |V| : (45, 22644)
+idf_mat:		|V| , 2	: (22644, 2)
