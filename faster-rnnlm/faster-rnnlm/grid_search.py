@@ -41,6 +41,7 @@ def _SettingsIter(task_id):
                                                 context_loss_type=context_loss_type,
                                                 beta_filepath=beta_file,
                                                 threads=3,
+                                                pos_context_size=0, # DISABLE POS.
                                                 dict_filepath=dict_file,
                                                 pos_filepath=pos_file)
                                         yield conf
