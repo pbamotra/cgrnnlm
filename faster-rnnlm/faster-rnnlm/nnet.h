@@ -29,6 +29,7 @@ struct NNetConfig {
   int hs_arity;
   std::string layer_type;
   int context_size;
+  int lda_topic_size; // context_size = lda_topic_size + pos_size.
 };
 
 

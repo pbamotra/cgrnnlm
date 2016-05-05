@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <thread>         // std::this_thread::sleep_for
+#include <chrono>         // std::chrono::seconds
 #ifndef NOTHREAD
 #include <pthread.h>
 #endif
@@ -94,14 +96,13 @@ struct TrainThreadTask {
 
   // global
   uint64_t* seed;
-  NNet* nnet;
-  INoiseGenerator* noise_generator;
-  int64_t* n_done_words;
-  int64_t* n_done_bytes;
-	bool l1_loss;
-	bool normalize;
+  NNet *nnet;
+  INoiseGenerator *noise_generator;
+  int64_t *n_done_words;
+  int64_t *n_done_bytes;
+  int context_loss_type;
+  bool normalize;
 };
-
 
 struct SimpleTimer {
   SimpleTimer() { Reset(); }
@@ -260,10 +261,13 @@ RowVector get_pos_by_word(std::string word) {
 }
 
 void print_row_vector(RowVector vec) {
+    fflush(stdout);
+    fflush(stderr);
+  std::this_thread::sleep_for (std::chrono::seconds(1));
   for(unsigned int i=0; i<vec.size(); i++) {
-    fprintf(stdout, "%f ", vec(0, i));
+    fprintf(stderr, "%f ", vec(0, i));
   }
-  fprintf(stdout, "\n");
+  fprintf(stderr, "(length = %ld)\n", vec.size());
 }
 
 // This thing may have to change. We may have to take words from the previous
@@ -271,7 +275,8 @@ void print_row_vector(RowVector vec) {
 // TODO: Fix ordering of ContextMatrix. If it is of sen_length: c1...c_k, we use
 // c_2, ... c_k as predictions for input contexts. So we don't know what to
 // predict for last word.
-void ComputeContextMatrix(NNet* nnet, const WordIndex *sen, RowMatrix *context_matrix, bool normalize) {
+void ComputeContextMatrix(NNet *nnet, const WordIndex *sen,
+                          RowMatrix *context_matrix, bool normalize) {
   if (context_matrix == NULL) {
     fprintf(stderr, "Provided a null context matrix. What did you expect?\n");
     return;
@@ -281,28 +286,31 @@ void ComputeContextMatrix(NNet* nnet, const WordIndex *sen, RowMatrix *context_m
   for (int i = 0; i < context_matrix->rows(); ++i) {
     std::string curr_word(nnet->vocab.GetWordByIndex(sen[i]));
     if (pos_matrix.size() > 0) {
-       RowVector concatenated_vector(1, context_matrix->cols());
-       concatenated_vector << get_beta_by_word(curr_word).row(0), get_pos_by_word(curr_word).row(0); 
-       context_matrix->row(i) = concatenated_vector;
+      RowVector concatenated_vector(1, context_matrix->cols());
+      concatenated_vector << get_beta_by_word(curr_word).row(0),
+          get_pos_by_word(curr_word).row(0);
+      context_matrix->row(i) = concatenated_vector;
     } else {
-    	context_matrix->row(i) = get_beta_by_word(curr_word).row(0);
-    }		//print_row_vector(context_matrix->row(i));
-		if (normalize) {
-				if (fabs(context_matrix->row(i).sum()) > 1e-5)
-						context_matrix->row(i) /= context_matrix->row(i).sum();
-		}
+      context_matrix->row(i) = get_beta_by_word(curr_word).row(0);
+    } // print_row_vector(context_matrix->row(i));
+    if (normalize) {
+      if (fabs(context_matrix->row(i).sum()) > 1e-5)
+        context_matrix->row(i) /= context_matrix->row(i).sum();
+    }
   }
 }
 
-inline void PropagateForward(NNet* nnet, const WordIndex* sen, int sen_length, const RowMatrix& context_matrix, IRecUpdater* layer) {
+inline void PropagateForward(NNet *nnet, const WordIndex *sen, int sen_length,
+                             const RowMatrix &context_matrix,
+                             IRecUpdater *layer) {
   // Dimensions:
   // nnet->embeddings: (|V| + |C|) x |H| (earlier it was |V| x |H|)
   // input: |S| x |H|, where |S| is length of sentence.
-  RowMatrix& input = layer->GetInputMatrix();
+  RowMatrix &input = layer->GetInputMatrix();
 
   // Return the last |C| rows of the ( (|V| + |C|) x h embeddings matrix).
-  const RowMatrix context_embeddings = nnet->embeddings.bottomRows(nnet->cfg.context_size);
-
+  const RowMatrix context_embeddings =
+      nnet->embeddings.bottomRows(nnet->cfg.context_size);
 
   for (int i = 0; i < sen_length; ++i) {
     // We're doing a [|v| + |C|] row matrix multiplication with the embeddings
@@ -316,7 +324,7 @@ inline void PropagateForward(NNet* nnet, const WordIndex* sen, int sen_length, c
 }
 
 // Checks file existence
-bool Exists(const std::string& fname) {
+bool Exists(const std::string &fname) {
   FILE *f = fopen(fname.c_str(), "rb");
   if (f == NULL) {
     return false;
@@ -327,11 +335,14 @@ bool Exists(const std::string& fname) {
 
 // Returns entropy of the model in bits
 //
-// if print_logprobs is true, -log10(Prob(sentence)) is printed for each sentence in the file
-Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bool accurate_nce, bool normalize) {
-  IRecUpdater* rec_layer_updater = nnet->rec_layer->CreateUpdater();
+// if print_logprobs is true, -log10(Prob(sentence)) is printed for each
+// sentence in the file
+Real EvaluateLM(NNet *nnet, const std::string &filename, bool print_logprobs,
+                bool accurate_nce, bool normalize) {
+  IRecUpdater *rec_layer_updater = nnet->rec_layer->CreateUpdater();
   bool kAutoInsertUnk = (kOOVPolicy == kConvertToUnk);
-  SentenceReader reader(nnet->vocab, filename, nnet->cfg.reverse_sentence, kAutoInsertUnk);
+  SentenceReader reader(nnet->vocab, filename, nnet->cfg.reverse_sentence,
+                        kAutoInsertUnk);
   Real logprob_sum = 0;
   uint64_t n_words = 0;
 
@@ -341,12 +352,12 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
   }
   while (reader.Read()) {
     if (reader.HasOOVWords() && kOOVPolicy == kSkipSentence) {
-        if (print_logprobs)
-            printf("OOV\n");
-        continue;
+      if (print_logprobs)
+        printf("OOV\n");
+      continue;
     }
 
-    const WordIndex* sen = reader.sentence();
+    const WordIndex *sen = reader.sentence();
     int seq_length = reader.sentence_length();
     Real sen_logprob = 0.0;
     const int vocab_portion = nnet->VocabPortionOfLayerSize();
@@ -356,13 +367,14 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
     PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
 
     // TODO: Change this as well to use correct split for Context/Vocab.
-    const RowMatrix& full_output = rec_layer_updater->GetOutputMatrix();
-    const RowMatrix& output = full_output.leftCols(vocab_portion);
+    const RowMatrix &full_output = rec_layer_updater->GetOutputMatrix();
+    const RowMatrix &output = full_output.leftCols(vocab_portion);
     if (!nnet->cfg.use_nce) {
       // Hierarchical Softmax
       for (int target = 1; target <= seq_length; ++target) {
         uint64_t ngram_hashes[MAX_NGRAM_ORDER];
-        int maxent_present = CalculateMaxentHashIndices(nnet, sen, target, ngram_hashes);
+        int maxent_present =
+            CalculateMaxentHashIndices(nnet, sen, target, ngram_hashes);
         const Real logprob = nnet->softmax_layer->CalculateLog10Probability(
             sen[target], ngram_hashes, maxent_present, kHSMaxentPrunning,
             output.row(target - 1).data(), &nnet->maxent_layer);
@@ -376,15 +388,16 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
       std::vector<int> ngram_present_all(seq_length);
 
       for (int target = 1; target <= seq_length; ++target) {
-        uint64_t* ngram_hashes = ngram_hashes_all.data() + MAX_NGRAM_ORDER * (target - 1);
-        int maxent_present = CalculateMaxentHashIndices(nnet, sen, target, ngram_hashes);
+        uint64_t *ngram_hashes =
+            ngram_hashes_all.data() + MAX_NGRAM_ORDER * (target - 1);
+        int maxent_present =
+            CalculateMaxentHashIndices(nnet, sen, target, ngram_hashes);
         ngram_present_all[target - 1] = maxent_present;
       }
 
       nnet->nce->CalculateLog10ProbabilityBatch(
-          output, &nnet->maxent_layer,
-          ngram_hashes_all.data(), ngram_present_all.data(),
-          sen, seq_length, !accurate_nce,
+          output, &nnet->maxent_layer, ngram_hashes_all.data(),
+          ngram_present_all.data(), sen, seq_length, !accurate_nce,
           &logprob_per_pos);
       for (int i = 0; i < seq_length; ++i) {
         sen_logprob -= logprob_per_pos[i];
@@ -402,49 +415,123 @@ Real EvaluateLM(NNet* nnet, const std::string& filename, bool print_logprobs, bo
   return entropy;
 }
 
-int getSign (double e) {
-		if (fabs(e) < 1e-5) 
-				return 0;
-		else
-				return (e>0) ? 1 : -1;
+int getSign(double e) {
+  if (fabs(e) < 1e-5)
+    return 0;
+  else
+    return (e > 0) ? 1 : -1;
 }
+
+// Returns the softmax loss and sets the gradient in context_grad.
+// output_block: 1 x |C| matrix.
+// true_context: 1 x |C| matrix.
+// context_grad: 1 x |C| matrix
+double SoftmaxContextLoss(const RowMatrix &output_block,
+                      const RowMatrix &true_context, RowVector *context_grad) {
+  const int context_size = output_block.cols();
+  double s_out = 0;
+  double s_truth = 0;
+  for (int i = 0; i < context_size; ++i) {
+    s_out += exp(output_block(0, i));
+    s_truth += exp(true_context(0, i));
+  }
+
+  double context_loss = 0;
+  for (int i = 0; i < context_size; ++i) {
+    double t_i = exp(true_context(0, i)) / s_truth;
+    double y_i = exp(output_block(0, i)) / s_out;
+    (*context_grad)(i) = y_i - t_i;
+    context_loss += t_i * log(y_i);
+  }
+  return context_loss;
+}
+
+double L1ContextLoss(const RowMatrix &output_block, const RowMatrix &true_context,
+                 RowVector *context_grad) {
+  const int context_size = output_block.cols();
+
+  double context_loss = 0;
+  for (int i = 0; i < context_size; ++i) {
+    double e = output_block(0, i) - true_context(0, i);
+    (*context_grad)(i) = getSign(e);
+    context_loss += fabs(e);
+  }
+  return context_loss;
+}
+
+double L2ContextLoss(const RowMatrix &output_block, const RowMatrix &true_context,
+                 RowVector *context_grad) {
+  const int context_size = output_block.cols();
+  double context_loss = 0;
+  for (int i = 0; i < context_size; ++i) {
+    double e = output_block(0, i) - true_context(0, i);
+    (*context_grad)(i) = e;
+    context_loss += e * e;
+  }
+  return context_loss;
+}
+
 // Returns the L2 loss and sets the gradient in context_grad.
 // output_block: 1 x |C| matrix.
 // true_context: 1 x |C| matrix.
 // context_grad: 1 x |C| matrix
+// loss_type = 1: L1 loss
+// loss_type = 2: L2 loss
+// loss_type = 3: Softmax loss
 double ComputeContextLoss(const RowMatrix &output_block,
-                     const RowMatrix &true_context, RowVector *context_grad, bool l1_loss) {
+                          const RowMatrix &true_context, int lda_topic_size,
+                          int loss_type, RowVector *context_grad) {
 
   assert(context_grad && output_block.rows() == 1 && true_context.rows() == 1);
   assert(output_block.cols() == true_context.cols());
   assert(output_block.cols() == context_grad->cols());
   context_grad->setZero();
+  
+  const int context_size = context_grad->cols();
+  const int pos_size = context_size - lda_topic_size;
+  
+  RowVector loss_lda_grad;
+  RowVector loss_pos_grad;
+  
+  loss_lda_grad.resize(lda_topic_size);
+  loss_pos_grad.resize(pos_size);
 
-  const int context_size = output_block.cols();
+  const RowVector& lda_output = output_block.block(0, 0, 1, lda_topic_size);
+  const RowVector& lda_true = true_context.block(0, 0, 1, lda_topic_size);
+  const RowVector& pos_output = output_block.block(0, lda_topic_size, 1, pos_size);
+  const RowVector& pos_true = true_context.block(0, lda_topic_size, 1, pos_size);
 
-  double context_loss = 0;
-  for (int i = 0; i < context_size; ++i) {
-    double e =  output_block(0, i) - true_context(0, i) ;
-    (*context_grad)(i) = (l1_loss) ? getSign(e) : e;
-    //(*context_grad)(i) = (l1_loss) ? getSign(e) : e/context_size;
-		//if (_DEBUG_MODE_judy) {
-      //fprintf(stderr, "Loss gradient ---- i: %d, %f \n", i,(*context_grad)(i));
-    //}
-    context_loss += (l1_loss) ? fabs(e) :e * e;
+  // 0 to lda_topic_size - 1 should be loss from LDA.
+  // lda_topic_size to remaining should be loss from POS.
+  double total_loss = 0;
+  assert(loss_type >= 1 && loss_type <= 3);
+  if (loss_type == 1) {
+      total_loss += L1ContextLoss(lda_output, lda_true, &loss_lda_grad);
+      total_loss += L1ContextLoss(pos_output, pos_true, &loss_pos_grad);
+  } else if (loss_type == 2) {
+      total_loss += L2ContextLoss(lda_output, lda_true, &loss_lda_grad);
+      total_loss += L2ContextLoss(pos_output, pos_true, &loss_pos_grad);
   }
-	return context_loss;
-  //return (l1_loss) ? (context_loss/context_size)  : (context_loss/( 2 * context_size ));
+  else if (loss_type == 3) {
+      total_loss += SoftmaxContextLoss(lda_output, lda_true, &loss_lda_grad);
+      total_loss += SoftmaxContextLoss(pos_output, pos_true, &loss_pos_grad);
+  }
+  (*context_grad) << loss_lda_grad, loss_pos_grad;
+
+  return total_loss;
 }
 
 void *RunThread(void *ptr) {
-  TrainThreadTask& task = *reinterpret_cast<TrainThreadTask*>(ptr);
-  NNet* nnet = task.nnet;
-  IRecUpdater* rec_layer_updater = nnet->rec_layer->CreateUpdater();
-  NCE::Updater* nce_updater = nnet->cfg.use_nce ? (new NCE::Updater(nnet->nce)) : NULL;
+  TrainThreadTask &task = *reinterpret_cast<TrainThreadTask *>(ptr);
+  NNet *nnet = task.nnet;
+  IRecUpdater *rec_layer_updater = nnet->rec_layer->CreateUpdater();
+  NCE::Updater *nce_updater =
+      nnet->cfg.use_nce ? (new NCE::Updater(nnet->nce)) : NULL;
 
   Real train_logprob = 0;
   bool kAutoInsertUnk = false;
-  SentenceReader reader(nnet->vocab, *task.train_file, nnet->cfg.reverse_sentence, kAutoInsertUnk);
+  SentenceReader reader(nnet->vocab, *task.train_file,
+                        nnet->cfg.reverse_sentence, kAutoInsertUnk);
   reader.SetChunk(task.chunk_id, task.total_chunks);
   int64_t n_done_bytes_local = 0, n_total_bytes = reader.GetFileSize();
   int64_t n_done_words_local = 0, n_last_report_at = 0;
@@ -457,6 +544,7 @@ void *RunThread(void *ptr) {
   // 0 to vocab_portion - 1 is for softmax/nce loss.
   // vocab_portion to layer_size - 1 is for conext loss.
   const int vocab_portion = nnet->VocabPortionOfLayerSize();
+  const int lda_topic_size = nnet->cfg.lda_topic_size;
   // The following two gradients are weighted separately to contribute to
   // output_grad.row(i).
   // We have the gradient from the vocab loss (either softmax or nce) here.
@@ -472,7 +560,7 @@ void *RunThread(void *ptr) {
   RowVector zero_context(nnet->cfg.context_size);
   zero_context.setZero();
 
-	double taskContextLoss=0;
+  double taskContextLoss = 0;
 
   while (reader.Read()) {
     n_done_words_local += reader.sentence_length();
@@ -507,9 +595,10 @@ void *RunThread(void *ptr) {
 
     if (reader.HasOOVWords())
       continue;
-    // A sentence contains <s>, followed by (seq_length - 1) actual words, followed by </s>
+    // A sentence contains <s>, followed by (seq_length - 1) actual words,
+    // followed by </s>
     // Both <s> and </s> are mapped to zero
-    const WordIndex* sen = reader.sentence();
+    const WordIndex *sen = reader.sentence();
     const int seq_length = reader.sentence_length();
     RowMatrix context_matrix(seq_length, nnet->cfg.context_size);
     ComputeContextMatrix(nnet, sen, &context_matrix, task.normalize);
@@ -518,8 +607,8 @@ void *RunThread(void *ptr) {
     PropagateForward(nnet, sen, seq_length, context_matrix, rec_layer_updater);
 
     // Calculate criterion given hidden layers
-    const RowMatrix& output = rec_layer_updater->GetOutputMatrix();
-    RowMatrix& output_grad = rec_layer_updater->GetOutputGradMatrix();
+    const RowMatrix &output = rec_layer_updater->GetOutputMatrix();
+    RowMatrix &output_grad = rec_layer_updater->GetOutputGradMatrix();
     output_grad.topRows(seq_length).setZero();
 
     if (_DEBUG_MODE_sg) {
@@ -530,8 +619,8 @@ void *RunThread(void *ptr) {
     }
 
     for (int target = 1; target <= seq_length; ++target) {
-      //const Real* output_row = output.row(target - 1).data();
-      //Real* output_grad_row = output_grad.row(target - 1).data();
+      // const Real* output_row = output.row(target - 1).data();
+      // Real* output_grad_row = output_grad.row(target - 1).data();
 
       WordIndex target_word = sen[target];
 
@@ -547,40 +636,46 @@ void *RunThread(void *ptr) {
       // |C| elements.
       const RowVector context_outputs =
           output.block(target - 1, vocab_portion, 1, nnet->cfg.context_size);
-			double context_loss=0;
-			
-			// Test Norm-1 or Norm-2?
-		
+      double context_loss = 0;
+
+      // Test Norm-1 or Norm-2?
+
       if (target < seq_length) {
         context_loss = ComputeContextLoss(
             context_outputs,
             context_matrix.row(target), // predicted should be t (from t-1).
-            &loss_context_grad,task.l1_loss);
+            lda_topic_size, task.context_loss_type,
+            &loss_context_grad);
       } else {
-          // Now we're at the end of the sentence. Target word should be </s> (mapped to zero).
-          // So Target context should also be its equivalent. We map it to 0.
+        // Now we're at the end of the sentence. Target word should be </s>
+        // (mapped to zero).
+        // So Target context should also be its equivalent. We map it to 0.
         context_loss = ComputeContextLoss(
             context_outputs,
             zero_context, // predicted should be t (from t-1).
-            &loss_context_grad,task.l1_loss);
+            lda_topic_size, task.context_loss_type,
+            &loss_context_grad);
       }
 
-			loss_context_grad /= seq_length;
-			context_loss /= (task.l1_loss) ? seq_length : (2*seq_length);
-			if (_DEBUG_MODE_judy) {
-					fprintf(stdout,"context grad\n");
-					print_row_vector(loss_context_grad);
+      loss_context_grad /= seq_length;
+      // This may be off by a factor of 2, but it's only for reporting, so we
+      // don't care.
+      context_loss /= seq_length;
+      if (_DEBUG_MODE_judy) {
+        fprintf(stdout, "context grad\n");
+        print_row_vector(loss_context_grad);
 
-					//fprintf(stderr, " Context loss : %f \n", context_loss); 
-			}
-			taskContextLoss+=context_loss;
+        // fprintf(stderr, " Context loss : %f \n", context_loss);
+      }
+      taskContextLoss += context_loss;
       // We set the gradient to loss from context diffs. We later add the loss
       // from softmax/nce for the vocab portion.
       output_grad.block(target - 1, vocab_portion, 1, nnet->cfg.context_size) =
           task.context_loss_weight * loss_context_grad;
 
       uint64_t ngram_hashes[MAX_NGRAM_ORDER] = {0};
-      int maxent_present = CalculateMaxentHashIndices(nnet, sen, target, ngram_hashes);
+      int maxent_present =
+          CalculateMaxentHashIndices(nnet, sen, target, ngram_hashes);
 
       loss_word_grad.setZero();
       if (!nnet->cfg.use_nce) {
@@ -605,40 +700,43 @@ void *RunThread(void *ptr) {
             task.lrate, l2reg, task.maxent_lrate, maxent_l2reg,
             gradient_clipping, loss_word_grad, &nnet->maxent_layer);
       }
-      output_grad.block(target - 1, 0, 1, vocab_portion) = task.word_loss_weight * loss_word_grad;
- 			if (_DEBUG_MODE_judy) {
-					fprintf(stdout,"vocab grad\n");
-					print_row_vector(loss_word_grad);
+      output_grad.block(target - 1, 0, 1, vocab_portion) =
+          task.word_loss_weight * loss_word_grad;
+      if (_DEBUG_MODE_judy) {
+        fprintf(stdout, "vocab grad\n");
+        print_row_vector(loss_word_grad);
 
-					//fprintf(stderr, " Context loss : %f \n", context_loss); 
-			}   
-		}
+        // fprintf(stderr, " Context loss : %f \n", context_loss);
+      }
+    }
 
-
-    rec_layer_updater->BackwardSequence(seq_length, GetNextRandom(&next_random), bptt_period, bptt);
+    rec_layer_updater->BackwardSequence(seq_length, GetNextRandom(&next_random),
+                                        bptt_period, bptt);
 
     // Update embeddings
     if (learn_embeddings) {
-      RowMatrix& input_grad = rec_layer_updater->GetInputGradMatrix();
+      RowMatrix &input_grad = rec_layer_updater->GetInputGradMatrix();
       ClipMatrix(input_grad.topRows(seq_length), gradient_clipping);
       for (int input = seq_length - 1; input >= 0; --input) {
         WordIndex last_word = sen[input];
         nnet->embeddings.row(last_word) *= (1 - l2reg);
-        nnet->embeddings.row(last_word).noalias() += input_grad.row(input) * task.lrate;
+        nnet->embeddings.row(last_word).noalias() +=
+            input_grad.row(input) * task.lrate;
       }
     }
 
     // Update recurrent weights
     if (learn_recurrent) {
-      rec_layer_updater->UpdateWeights(seq_length, task.lrate, l2reg, rmsprop, gradient_clipping);
+      rec_layer_updater->UpdateWeights(seq_length, task.lrate, l2reg, rmsprop,
+                                       gradient_clipping);
     }
     if (_DEBUG_MODE_sg && ++_SENTENCE_COUNTER > _DEBUG_MAX_READINGS) {
-        break;
+      break;
     }
   }
-		//if (_DEBUG_MODE_judy) {
-				//fprintf(stderr,"task ContextLoss %f--------\n", taskContextLoss);
-		//}
+  // if (_DEBUG_MODE_judy) {
+  //fprintf(stderr,"task ContextLoss %f--------\n", taskContextLoss);
+  //}
 
   delete rec_layer_updater;
   delete nce_updater;
@@ -650,37 +748,39 @@ void *RunThread(void *ptr) {
 #endif
 }
 
-void TrainLM(
-    const std::string& model_weight_file,
-    const std::string& train_file, const std::string& valid_file,
-    bool show_progress, bool show_train_entropy, int n_threads, int n_inner_epochs,
-    NNet* nnet, bool l1_loss, bool normalize) {
-  NNet* noise_net = NULL;
-  INoiseGenerator* noise_generator = NULL;
+void TrainLM(const std::string &model_weight_file,
+             const std::string &train_file, const std::string &valid_file,
+             bool show_progress, bool show_train_entropy, int n_threads,
+             int n_inner_epochs, NNet *nnet, int context_loss_type, bool normalize) {
+  NNet *noise_net = NULL;
+  INoiseGenerator *noise_generator = NULL;
   if (nnet->cfg.use_nce) {
     if (nce_maxent_model_weight_file[0] != 0) {
       const bool kUseCuda = true;
       const bool kUseCudaMemoryEfficient = true;
-      noise_net = new NNet(nnet->vocab, nce_maxent_model_weight_file, kUseCuda, kUseCudaMemoryEfficient);
+      noise_net = new NNet(nnet->vocab, nce_maxent_model_weight_file, kUseCuda,
+                           kUseCudaMemoryEfficient);
       if (noise_net->cfg.layer_size != 0) {
-        fprintf(stderr, "ERROR: Cannot initialize HSMaxEntNoiseGenerator (layer size != 0)\n");
+        fprintf(stderr, "ERROR: Cannot initialize HSMaxEntNoiseGenerator "
+                        "(layer size != 0)\n");
         exit(1);
       }
 
       {
         const bool kPrintLogprobs = false;
         const bool kNCEAccurate = true;
-        Real test_enropy = EvaluateLM(noise_net, valid_file, kPrintLogprobs, kNCEAccurate,normalize);
+        Real test_enropy = EvaluateLM(noise_net, valid_file, kPrintLogprobs,
+                                      kNCEAccurate, normalize);
         fprintf(stderr, "Noise Model Valid entropy %f\n", test_enropy);
       }
 
       noise_generator = new HSMaxEntNoiseGenerator(
-        noise_net->softmax_layer, &noise_net->maxent_layer,
-        noise_net->cfg.maxent_hash_size, nnet->vocab.size(),
-        noise_net->cfg.maxent_order);
+          noise_net->softmax_layer, &noise_net->maxent_layer,
+          noise_net->cfg.maxent_hash_size, nnet->vocab.size(),
+          noise_net->cfg.maxent_order);
     } else {
       noise_generator = new UnigramNoiseGenerator(
-        nnet->vocab, nce_unigram_power, nce_unigram_min_cells);
+          nnet->vocab, nce_unigram_power, nce_unigram_min_cells);
     }
   }
 
@@ -697,14 +797,16 @@ void TrainLM(
   {
     const bool kPrintLogprobs = false;
     const bool kNCEAccurate = true;
-    bl_entropy = EvaluateLM(nnet, valid_file, kPrintLogprobs, kNCEAccurate,normalize);
+    bl_entropy =
+        EvaluateLM(nnet, valid_file, kPrintLogprobs, kNCEAccurate, normalize);
     fprintf(stderr, "Initial entropy (bits) valid: %8.5f\n", bl_entropy);
   }
 
   bool do_lr_decay = false;
   Real lrate = initial_lrate;
   Real maxent_lrate = initial_maxent_lrate;
-  for (int n_bad_epochs = 0, epoch = 1; n_bad_epochs <= max_bad_epochs; ++epoch) {
+  for (int n_bad_epochs = 0, epoch = 1; n_bad_epochs <= max_bad_epochs;
+       ++epoch) {
     int inner_epoch = (epoch - 1) % n_inner_epochs;
 
     if (do_lr_decay) {
@@ -736,14 +838,15 @@ void TrainLM(
 
       tasks[i].context_loss_weight = context_loss_weight;
       tasks[i].word_loss_weight = word_loss_weight;
-			tasks[i].l1_loss = l1_loss;
-			tasks[i].normalize = normalize;
+      tasks[i].context_loss_type = context_loss_type;
+      tasks[i].normalize = normalize;
     }
     for (int i = 0; i < n_threads; i++) {
 #ifdef NOTHREAD
-      RunThread(reinterpret_cast<void*>(&tasks[i]));
+      RunThread(reinterpret_cast<void *>(&tasks[i]));
 #else
-      pthread_create(&threads[i], NULL, RunThread, reinterpret_cast<void*>(&tasks[i]));
+      pthread_create(&threads[i], NULL, RunThread,
+                     reinterpret_cast<void *>(&tasks[i]));
     }
     for (int i = 0; i < n_threads; i++) {
       pthread_join(threads[i], NULL);
@@ -753,7 +856,8 @@ void TrainLM(
 
     const bool kPrintLogprobs = false;
     const bool kNCEAccurate = true;
-    const Real entropy = EvaluateLM(nnet, valid_file, kPrintLogprobs, kNCEAccurate,normalize);
+    const Real entropy =
+        EvaluateLM(nnet, valid_file, kPrintLogprobs, kNCEAccurate, normalize);
     if (!show_progress) {
       fprintf(stderr, "Epoch %d ", epoch);
     }
@@ -765,11 +869,14 @@ void TrainLM(
     const double elapsed = timer.Tick();
     const double elapsed_validate = elapsed - elapsed_train;
     if (elapsed_train < 999) {
-      fprintf(stderr, "  elapsed: %.1lfs+%.1lfs", elapsed_train, elapsed_validate);
+      fprintf(stderr, "  elapsed: %.1lfs+%.1lfs", elapsed_train,
+              elapsed_validate);
     } else if (elapsed < 999 * 60) {
-      fprintf(stderr, "  elapsed: %.1lfm+%.1lfm", elapsed_train / 60, elapsed_validate / 60);
+      fprintf(stderr, "  elapsed: %.1lfm+%.1lfm", elapsed_train / 60,
+              elapsed_validate / 60);
     } else {
-      fprintf(stderr, "  elapsed: %.1lfh+%.1lfh", elapsed_train / 3600, elapsed_validate / 3600);
+      fprintf(stderr, "  elapsed: %.1lfh+%.1lfh", elapsed_train / 3600,
+              elapsed_validate / 3600);
     }
 
     Real ratio = bl_entropy / entropy;
@@ -803,8 +910,8 @@ void TrainLM(
   }
 }
 
-
-void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature, bool normalize) {
+void SampleFromLM(NNet *nnet, int seed, int n_samples,
+                  Real generate_temperature, bool normalize) {
   std::vector<WordIndex> wids;
   {
     char buffer[MAX_STRING];
@@ -817,7 +924,8 @@ void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature
         wid = nnet->vocab.GetIndexByWord("<unk>");
         if (wid == Vocabulary::kWordOOV) {
           fprintf(stderr, "ERROR Word '%s' is not found in vocabulary;"
-                 " moreover, <unk> is not found as well\n", buffer);
+                          " moreover, <unk> is not found as well\n",
+                  buffer);
           exit(1);
         }
       }
@@ -831,12 +939,13 @@ void SampleFromLM(NNet* nnet, int seed, int n_samples, Real generate_temperature
   }
   printf("\n");
 
-  printf("Format: <prefix> | <generated> | <log10prob(generated)> | <log10prob per word>\n");
+  printf("Format: <prefix> | <generated> | <log10prob(generated)> | <log10prob "
+         "per word>\n");
 
   srand(seed);
 
   std::vector<double> probs(nnet->vocab.size());
-  IRecUpdater* updater = nnet->rec_layer->CreateUpdater();
+  IRecUpdater *updater = nnet->rec_layer->CreateUpdater();
 
   const int vocab_portion = nnet->VocabPortionOfLayerSize();
   RowMatrix context_matrix(wids.size(), nnet->cfg.context_size);
@@ -948,12 +1057,11 @@ int main(int argc, char **argv) {
   int bptt_skip = bptt_period - bptt;
 
   int train_and_test = 0;
-	bool l1_loss=false;
-	bool normalize=false;
+  int context_loss_type = 1;
+  bool normalize = false;
   // If we use LDA, context size is num_topics.
   int context_size = 10;
   int pos_context_size = 45;
-
 
   SimpleOptionParser opts;
   opts.Echo("Fast Recurrent Neural Network Language Model");
@@ -992,7 +1100,8 @@ int main(int argc, char **argv) {
   opts.Add("alpha", "Learning rate for recurrent and embedding weights", &initial_lrate);
   opts.Add("word_loss_weight", "Loss weight from word prediction loss.", &word_loss_weight);
   opts.Add("context_loss_weight", "Loss weight from context prediction loss.", &context_loss_weight);
-  opts.Add("l1_loss", "Flag for l1 loss", &l1_loss);
+  opts.Add("context_loss_type", "int between 1-3, 1(l1), 2(L2), 3(Softmax), default: 1",
+          &context_loss_type);
   opts.Add("normalize", "Flag for normalizing ContextMatrix", &normalize);
   opts.Add("maxent-alpha", "Learning rate for maxent layer", &initial_maxent_lrate);
   opts.Add("beta", "Weight decay for recurrent and embedding weight, i.e. L2-regularization", &l2reg);
@@ -1068,6 +1177,11 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  if (context_loss_type < 1 || context_loss_type > 3) {
+      fprintf(stderr, "context_loss_type should be an int between [1, 3].");
+      return 1;
+  }
+
   if (!nce_accurate_test && !test_file.empty()) {
     use_cuda = false;
   }
@@ -1108,6 +1222,7 @@ int main(int argc, char **argv) {
       // for back-compability
       maxent_hash_size -= maxent_hash_size % vocab.size();
     }
+    int lda_topic_size = context_size;
     if (!pos_filepath.empty() && pos_context_size > 0) {
        context_size += pos_context_size;
     }
@@ -1115,7 +1230,7 @@ int main(int argc, char **argv) {
     NNetConfig cfg = {
       layer_size, layer_count, maxent_hash_size, maxent_order,
       (nce_samples > 0), static_cast<Real>(nce_lnz), reverse_sentence,
-      hs_arity, layer_type, context_size};
+      hs_arity, layer_type, context_size, lda_topic_size};
     main_nnet = new NNet(vocab, cfg, use_cuda, use_cuda_memory_efficient);
     if (diagonal_initialization > 0) {
       main_nnet->ApplyDiagonalInitialization(diagonal_initialization);
@@ -1128,12 +1243,10 @@ int main(int argc, char **argv) {
     show_train_entropy = false;
   }
 
-  fprintf(stderr, "train_and_test = %d", train_and_test);
   if (train_and_test) {
 
-    fprintf(stderr, "here");
     TrainLM(model_weight_file, train_file, valid_file, show_progress,
-            show_train_entropy, n_threads, n_inner_epochs, main_nnet, l1_loss,
+            show_train_entropy, n_threads, n_inner_epochs, main_nnet, context_loss_type,
             normalize);
     Real test_entropy =
         EvaluateLM(main_nnet, test_file, false, nce_accurate_test, normalize);
@@ -1164,7 +1277,7 @@ int main(int argc, char **argv) {
     } else {
       // Train mode
       TrainLM(model_weight_file, train_file, valid_file, show_progress,
-              show_train_entropy, n_threads, n_inner_epochs, main_nnet,l1_loss,normalize);
+              show_train_entropy, n_threads, n_inner_epochs, main_nnet, context_loss_type,normalize);
     }
   }
 
