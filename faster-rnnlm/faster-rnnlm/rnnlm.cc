@@ -1008,7 +1008,7 @@ int main(int argc, char **argv) {
   opts.Echo();
   opts.Echo("Noise Contrastive Estimation options:");
   opts.Add("nce", "Number of noise samples; if nce is position then NCE is used instead of HS", &nce_samples);
-  opts.Add("nce-accurate-test", "Explicitly normalize output probabilities; use this option to compute actual entropy", &nce_accurate_test);
+  opts.Add("nce_accurate_test", "Explicitly normalize output probabilities; use this option to compute actual entropy", &nce_accurate_test);
   opts.Add("use-cuda", "Use CUDA to compute validation entropy and test entropy in accurate mode, i.e. if nce-accurate-test is true", &use_cuda);
   opts.Add("use-cuda-memory-efficient", "Do not copy the whole maxent layer on GPU. Slower, but could be useful to deal with huge maxent layers", &use_cuda_memory_efficient);
   opts.Add("nce-unigram-power", "Discount power for unigram frequency", &nce_unigram_power);
