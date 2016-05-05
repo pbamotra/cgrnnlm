@@ -61,6 +61,9 @@ class Configuration(object):
     def GetModelName(self):
         m_name = ''
         for s_name, s_val in self.settings.iteritems():
+            s_val = str(s_val)
+            if '/' in s_val:
+                continue
             m_name += '%s_%s' % (s_name, s_val)
         return m_name
 
