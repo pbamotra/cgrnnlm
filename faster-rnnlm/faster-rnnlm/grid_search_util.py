@@ -1,6 +1,8 @@
 import os
 import subprocess
 
+SCRATCH_DIR = '/scratch/sbandiat/pgm-models/new'
+
 class Configuration(object):
 
     def __init__(self, **kwargs):
@@ -19,23 +21,33 @@ class Configuration(object):
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
 
+    def _DeleteIfExists(self, file_name):
+        if os.path.exists(file_name):
+            print 'Deleting file %s' % file_name
+            os.remove(file_name)
+
     def Run(self):
         cmd = './rnnlm %s' % ' '.join(self.flags)
         log_dir = 'logs'
         self._MakeDirs(log_dir)
         log_file = os.path.join(log_dir, '%s.log.txt' % self.GetModelName())
+        self._DeleteIfExists(self.model_file)
+        self._DeleteIfExists(self.model_file + '.nnet')
         _RunCmd(cmd.split(' '), log_file)
         test_entropy = self.GetTestEntropy(log_file)
-        print 'Results: Model %s, Test Entropy: %s' % (self.GetModelName(), test_entropy) 
+        self._DeleteIfExists(self.model_file)
+        self._DeleteIfExists(self.model_file + '.nnet')
+        print 'Results: Model %s, Test Entropy: %s, Test Perplexity: %s' % (
+                self.GetModelName(), test_entropy, 2**test_entropy) 
 
     def _AddPTBFlags(self):
         base_dir = '../benchmarks'
         data_dir = os.path.join(base_dir, 'simple-examples', 'data')
         train_file = os.path.join(data_dir, 'ptb.train.txt')
         validation_file = os.path.join(data_dir, 'ptb.valid.txt')
-        model_file = os.path.join(base_dir, 'models', '%s_ptb' %  self.GetModelName())
+        self.model_file = os.path.join(SCRATCH_DIR, 'models', '%s_ptb' %  self.GetModelName())
         test_file = os.path.join(data_dir, 'ptb.test.txt')
-        self._AddExecutionFlags(model_file, train_file, validation_file, test_file)
+        self._AddExecutionFlags(self.model_file, train_file, validation_file, test_file)
 
     def _AddExecutionFlags(self, model_file, train_file, validation_file, test_file):
         model_dir = os.path.dirname(model_file)
