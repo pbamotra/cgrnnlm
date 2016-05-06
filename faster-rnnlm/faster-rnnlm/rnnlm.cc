@@ -56,6 +56,7 @@ const OOVPolicy kOOVPolicy = kSkipSentence;
 Real initial_lrate = 0.1, initial_maxent_lrate = 0.1;
 Real l2reg = 1e-6, maxent_l2reg = 1e-6;
 Real word_loss_weight = 1, context_loss_weight = 1;
+Real context_gamma = 0;
 int bptt = 5, bptt_period = 6;
 Real rmsprop = -1;
 Real gradient_clipping = 1;
@@ -293,6 +294,9 @@ void ComputeContextMatrix(NNet *nnet, const WordIndex *sen,
     } else {
       context_matrix->row(i) = get_beta_by_word(curr_word).row(0);
     } // print_row_vector(context_matrix->row(i));
+    if (i > 0) {
+        context_matrix->row(i) = nnet->cfg.context_gamma*context_matrix->row(i-1) + (1 - nnet->cfg.context_gamma)*context_matrix->row(i);
+    }
     if (normalize) {
       if (fabs(context_matrix->row(i).sum()) > 1e-5)
         context_matrix->row(i) /= context_matrix->row(i).sum();
@@ -1099,6 +1103,7 @@ int main(int argc, char **argv) {
   opts.Add("bptt-skip", "Number of steps without BPTT; doesn't have any effect if bptt is 0", &bptt_skip);
   opts.Add("alpha", "Learning rate for recurrent and embedding weights", &initial_lrate);
   opts.Add("word_loss_weight", "Loss weight from word prediction loss.", &word_loss_weight);
+  opts.Add("context_gamma", "The weight associated with context from previous word.", &context_gamma);
   opts.Add("context_loss_weight", "Loss weight from context prediction loss.", &context_loss_weight);
   opts.Add("context_loss_type", "int between 1-3, 1(l1), 2(L2), 3(Softmax), default: 1",
           &context_loss_type);
@@ -1177,6 +1182,11 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  if (context_gamma > 1 || context_gamma < 0) {
+      fprintf(stderr, "Error: context_gamma should be between [0, 1].\n");
+      return 1;
+  }
+
   if (context_loss_type < 1 || context_loss_type > 3) {
       fprintf(stderr, "context_loss_type should be an int between [1, 3].");
       return 1;
@@ -1230,7 +1240,8 @@ int main(int argc, char **argv) {
     NNetConfig cfg = {
       layer_size, layer_count, maxent_hash_size, maxent_order,
       (nce_samples > 0), static_cast<Real>(nce_lnz), reverse_sentence,
-      hs_arity, layer_type, context_size, lda_topic_size};
+      hs_arity, layer_type, context_size, lda_topic_size,
+    context_gamma};
     main_nnet = new NNet(vocab, cfg, use_cuda, use_cuda_memory_efficient);
     if (diagonal_initialization > 0) {
       main_nnet->ApplyDiagonalInitialization(diagonal_initialization);
